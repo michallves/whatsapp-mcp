@@ -300,6 +300,34 @@ only helps a client that can read the filesystem — use `view_media` otherwise.
 - `message_id` (required): ID of the message with media
 - `chat_jid` (required): JID of the chat containing the message
 
+#### `get_profile_picture`
+
+Download the profile picture of a contact or group. The bridge stores it under
+`store/profile-pictures/` (named with the picture ID, so a changed photo is
+fetched again and an unchanged one is served from disk).
+
+**Parameters:**
+
+- `jid` (required): contact (`number@s.whatsapp.net`, `number@lid`) or group (`id@g.us`) JID
+- `preview` (optional): small thumbnail instead of the full-size image
+- `save_to` (optional): destination file path to copy the picture to
+
+Returns `status` `ok`, `no_picture` (nothing set), `private` (the contact hides
+it from you), `rate_limited`, `not_connected`, `invalid_jid` or `error`, plus
+`file_path` on success.
+
+#### `get_group_profile_pictures`
+
+Download the profile picture of every member of a group, resolving LIDs to phone
+numbers and names like the other tools. Returns one entry per member with its
+`status`, so members without a visible photo are easy to list.
+
+**Parameters:**
+
+- `group_jid` (required): group JID (`id@g.us`)
+- `dest_dir` (optional): directory to copy the pictures to as `<name-slug>.jpg`
+- `preview` (optional): thumbnails instead of full-size images
+
 #### `view_media`
 
 View the media of a message as an image, for clients with no filesystem access
@@ -897,6 +925,7 @@ flowchart LR
         REACT["/api/react"]
         TYPE["/api/typing"]
         HIST["/api/history"]
+        PROF["/api/profile-picture<br/>/api/group-participants"]
         HEALTH["/api/health"]
     end
 
@@ -905,7 +934,7 @@ flowchart LR
         CONT["Contact Tools<br/>search_contacts, get_contact"]
         MSG["Message Tools<br/>list_messages, send_message, etc."]
         CHAT["Chat Tools<br/>list_chats, get_chat, etc."]
-        MEDIA["Media Tools<br/>send_file, download_media, etc."]
+        MEDIA["Media Tools<br/>send_file, download_media, get_profile_picture, etc."]
     end
 
     MCPTools -->|HTTP Requests| GoAPI

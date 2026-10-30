@@ -28,10 +28,16 @@ from whatsapp import (
     get_direct_chat_by_contact as whatsapp_get_direct_chat_by_contact,
 )
 from whatsapp import (
+    get_group_profile_pictures as whatsapp_get_group_profile_pictures,
+)
+from whatsapp import (
     get_last_interaction as whatsapp_get_last_interaction,
 )
 from whatsapp import (
     get_message_context as whatsapp_get_message_context,
+)
+from whatsapp import (
+    get_profile_picture as whatsapp_get_profile_picture,
 )
 from whatsapp import (
     get_sender_name as whatsapp_get_sender_name,
@@ -499,6 +505,40 @@ def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     """
     success, status_message = whatsapp_audio_voice_message(recipient, media_path)
     return {"success": success, "message": status_message}
+
+
+@mcp.tool()
+def get_profile_picture(jid: str, preview: bool = False, save_to: str | None = None) -> dict[str, Any]:
+    """Download the profile picture of a WhatsApp contact or group.
+
+    Args:
+        jid: Contact JID (number@s.whatsapp.net or number@lid) or group JID (id@g.us)
+        preview: Fetch the small thumbnail instead of the full-size image
+        save_to: Optional destination file path to copy the picture to (e.g. ~/deck/foto.jpg)
+
+    Returns:
+        success, status (ok, no_picture, private, rate_limited, not_connected, invalid_jid, error),
+        a message and, on success, the local file_path. Contacts can hide their photo
+        (status "private") or have none (status "no_picture").
+    """
+    return whatsapp_get_profile_picture(jid, preview, save_to)
+
+
+@mcp.tool()
+def get_group_profile_pictures(group_jid: str, dest_dir: str | None = None, preview: bool = False) -> dict[str, Any]:
+    """Download the profile picture of every member of a WhatsApp group.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        dest_dir: Optional directory to copy the pictures to, named <name-slug>.jpg
+        preview: Fetch small thumbnails instead of full-size images
+
+    Returns:
+        group_name, counts and one entry per member with name, jid, phone_jid, status
+        (ok, no_picture, private, rate_limited, ...) and file_path, so members without a
+        photo are easy to spot.
+    """
+    return whatsapp_get_group_profile_pictures(group_jid, dest_dir, preview)
 
 
 @mcp.tool()

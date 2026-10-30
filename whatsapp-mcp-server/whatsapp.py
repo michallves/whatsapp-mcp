@@ -2,6 +2,7 @@ import json
 import os
 import os.path
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from typing import Any
@@ -1342,6 +1343,116 @@ def download_media(message_id: str, chat_jid: str) -> str | None:
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return None
+
+
+def _bridge_post_json(endpoint: str, payload: dict[str, Any], timeout: int = 60) -> tuple[int, dict[str, Any]]:
+    """POST to the bridge and return (http_status, json_body); body is {} when not JSON."""
+    response = requests.post(
+        f"{WHATSAPP_API_BASE_URL}/{endpoint}", json=payload, headers=_bridge_headers(), timeout=timeout
+    )
+    try:
+        body = response.json()
+    except ValueError:
+        body = {"message": response.text.strip()}
+    return response.status_code, body if isinstance(body, dict) else {}
+
+
+def _slugify_filename(name: str) -> str:
+    """Lowercase ASCII file stem from a display name ("João Silva" -> "joao-silva")."""
+    import re
+    import unicodedata
+
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+    return slug or "contact"
+
+
+def get_profile_picture(jid: str, preview: bool = False, save_to: str | None = None) -> dict[str, Any]:
+    """Download the profile picture of a contact or group.
+
+    Args:
+        jid: Contact (number@s.whatsapp.net, number@lid) or group (id@g.us) JID
+        preview: Fetch the small thumbnail instead of the full-size image
+        save_to: Optional destination file path; the picture is copied there
+
+    Returns:
+        success, status (ok, no_picture, private, rate_limited, not_connected,
+        invalid_jid, error), message and, when downloaded, file_path.
+    """
+    try:
+        if not jid:
+            return {"success": False, "status": "invalid_jid", "message": "jid must be provided"}
+        http_status, body = _bridge_post_json("profile-picture", {"jid": jid, "preview": preview})
+        if not body.get("success"):
+            return {
+                "success": False,
+                "status": body.get("status", "error"),
+                "message": body.get("message") or f"Bridge answered HTTP {http_status}",
+            }
+        path = _host_media_path(body.get("path"))
+        if save_to:
+            import shutil
+
+            if not path or not os.path.exists(path):
+                return {"success": False, "status": "error", "message": f"Downloaded file not found on host: {path}"}
+            save_to = os.path.abspath(os.path.expanduser(save_to))
+            os.makedirs(os.path.dirname(save_to), exist_ok=True)
+            shutil.copyfile(path, save_to)
+            path = save_to
+        return {"success": True, "status": "ok", "message": body.get("message", ""), "file_path": path}
+    except requests.RequestException as e:
+        return {"success": False, "status": "error", "message": f"Request error: {e}"}
+
+
+def get_group_profile_pictures(group_jid: str, dest_dir: str | None = None, preview: bool = False) -> dict[str, Any]:
+    """Download the profile picture of every participant of a group.
+
+    Each participant is resolved to a display name through the same LID to phone
+    mapping used elsewhere. With dest_dir the pictures are copied there as
+    <name-slug>.jpg; otherwise file_path points into the bridge store.
+    """
+    try:
+        http_status, body = _bridge_post_json("group-participants", {"group_jid": group_jid})
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Request error: {e}"}
+    if not body.get("success"):
+        return {"success": False, "message": body.get("message") or f"Bridge answered HTTP {http_status}"}
+
+    results: list[dict[str, Any]] = []
+    used_names: set[str] = set()
+    participants = body.get("participants", [])
+    for index, participant in enumerate(participants):
+        phone_jid = participant.get("phone_jid") or ""
+        lid = participant.get("lid") or ""
+        jid = phone_jid or participant.get("jid") or lid
+        name = get_sender_name(phone_jid or lid or jid)
+        entry: dict[str, Any] = {"name": name, "jid": jid, "phone_jid": phone_jid or None, "lid": lid or None}
+
+        save_to = None
+        if dest_dir:
+            stem = _slugify_filename(name)
+            unique, n = stem, 2
+            while unique in used_names:
+                unique, n = f"{stem}-{n}", n + 1
+            used_names.add(unique)
+            save_to = os.path.join(dest_dir, f"{unique}.jpg")
+
+        result = get_profile_picture(jid, preview=preview, save_to=save_to)
+        # A LID-only member can be reachable only through the LID form.
+        if result["status"] == "error" and lid and jid != lid:
+            result = get_profile_picture(lid, preview=preview, save_to=save_to)
+        entry.update(status=result["status"], message=result["message"], file_path=result.get("file_path"))
+        results.append(entry)
+        if index < len(participants) - 1:
+            time.sleep(0.5)  # be gentle: WhatsApp rate limits profile picture queries
+
+    return {
+        "success": True,
+        "group_name": body.get("group_name"),
+        "total": len(results),
+        "downloaded": sum(1 for r in results if r["status"] == "ok"),
+        "results": results,
+    }
 
 
 def send_interactive_reply(
