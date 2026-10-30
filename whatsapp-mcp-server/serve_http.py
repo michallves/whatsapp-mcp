@@ -3,6 +3,7 @@
 Uso: WHATSAPP_MCP_HTTP_TOKEN_FILE=... python serve_http.py   (escuta em 127.0.0.1:8201)
 URL final: https://<host-do-tunel>/<token>/mcp
 """
+
 import hmac
 import os
 
@@ -30,7 +31,7 @@ class TokenGuard:
         if scope["type"] == "http":
             path = scope["path"]
             seg = path[: len(PREFIX)]
-            rest = path[len(PREFIX):]
+            rest = path[len(PREFIX) :]
             if hmac.compare_digest(seg, PREFIX) and (rest == "" or rest.startswith("/")):
                 scope = dict(scope, path=rest or "/", raw_path=(rest or "/").encode())
                 return await self.app(scope, receive, send)
