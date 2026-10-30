@@ -180,7 +180,16 @@ def transcribe_file(
     """
     source = Path(path)
     if not source.is_file():
-        raise TranscriptionError(f"Audio file not found: {source}")
+        reason = "the path does not exist on this host"
+        if source.exists():
+            reason = "the path exists but is not a regular file"
+        elif source.parent.is_dir():
+            reason = "the folder exists but the file is missing"
+        raise TranscriptionError(
+            f"Audio file not found: expected at {source} ({reason}). "
+            "If the bridge runs in a container, set WHATSAPP_BRIDGE_CONTAINER_STORE_DIR "
+            "to the store path it reports (default /app/store)."
+        )
     if provider == "openai_compatible":
         return transcribe_http(source, model or configured_model(provider))
     if not ffmpeg_available():

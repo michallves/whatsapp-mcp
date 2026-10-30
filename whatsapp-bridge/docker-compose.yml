@@ -1,0 +1,14 @@
+services:
+  bridge:
+    build: .
+    container_name: whatsapp-bridge
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    environment:
+      HOME: /app/store
+      WHATSAPP_BRIDGE_TOKEN: ${WHATSAPP_BRIDGE_TOKEN}
+      XDG_DATA_HOME: /app/store/data
+    volumes:
+      - ./store:/app/store
+    command: ["--full-history-pair"]

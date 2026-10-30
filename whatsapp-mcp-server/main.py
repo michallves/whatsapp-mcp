@@ -55,6 +55,9 @@ from whatsapp import (
     send_file as whatsapp_send_file,
 )
 from whatsapp import (
+    send_interactive_reply as whatsapp_send_interactive_reply,
+)
+from whatsapp import (
     send_message as whatsapp_send_message,
 )
 from whatsapp import (
@@ -392,6 +395,44 @@ def send_reaction(
         A dictionary containing success status and a status message
     """
     success, status_message = whatsapp_send_reaction(recipient, message_id, emoji, from_me, sender_jid)
+    return {"success": success, "message": status_message}
+
+
+@mcp.tool()
+def reply_to_interactive(
+    recipient: str,
+    kind: str,
+    option_id: str = "",
+    title: str = "",
+    message_id: str = "",
+    sender_jid: str = "",
+    index: int = 0,
+    name: str = "",
+    params_json: str = "",
+) -> dict[str, Any]:
+    """Answer an interactive message (buttons, lists, quick replies, templates).
+
+    Interactive messages are shown in list_messages with markers such as
+    "[Botão id=abc] Sim" or "- [id=row1] Opção". Use those ids here.
+
+    Args:
+        recipient: Chat JID of the conversation
+        kind: "button" (legacy buttons), "list" (list row), "template" (template quick
+              reply) or "native_flow" (quick_reply / list from native-flow messages; most
+              modern business bots)
+        option_id: The id shown in the marker of the chosen option
+        title: The visible text of the chosen option
+        message_id: ID of the interactive message being answered (recommended)
+        sender_jid: JID of that message's sender (needed in groups)
+        index: Button index, only for kind="template"
+        name: native_flow only; response name (default "quick_reply")
+        params_json: native_flow only; raw response params, overrides the default
+                     {"display_text","id"} payload. Does not open or fill WhatsApp Flow
+                     forms; Flows must be completed on the phone.
+    """
+    success, status_message = whatsapp_send_interactive_reply(
+        recipient, kind, option_id, title, message_id, sender_jid, index, name, params_json
+    )
     return {"success": success, "message": status_message}
 
 

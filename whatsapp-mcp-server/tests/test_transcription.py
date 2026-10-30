@@ -331,3 +331,15 @@ def test_http_ignores_ambient_credentials_and_proxies(tmp_path, monkeypatch):
 
     monkeypatch.setattr(transcription.requests.Session, "send", send)
     assert transcription.transcribe_http(audio, "parakeet") == "hello"
+
+
+def test_a_missing_audio_file_names_the_expected_path_and_reason(tmp_path):
+    missing = tmp_path / "chat" / "voice.ogg"
+
+    with pytest.raises(transcription.TranscriptionError) as err:
+        transcription.transcribe_file(missing, tmp_path, model="m", provider="openai_compatible")
+
+    message = str(err.value)
+    assert str(missing) in message
+    assert "does not exist on this host" in message
+    assert "WHATSAPP_BRIDGE_CONTAINER_STORE_DIR" in message

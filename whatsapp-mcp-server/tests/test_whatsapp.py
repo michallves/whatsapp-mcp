@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+import whatsapp
 from whatsapp import Chat, Contact, Message, chat_to_dict, contact_to_dict, msg_to_dict
 
 
@@ -233,3 +234,29 @@ class TestContactConversion:
         result = contact_to_dict(contact)
 
         assert result["name"] is None
+
+
+def test_host_media_path_maps_a_containerised_bridge_path(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    audio = store / "123@s.whatsapp.net" / "voice.ogg"
+    audio.parent.mkdir(parents=True)
+    audio.write_bytes(b"x")
+    monkeypatch.setattr(whatsapp, "MESSAGES_DB_PATH", str(store / "messages.db"))
+    monkeypatch.delenv("WHATSAPP_BRIDGE_CONTAINER_STORE_DIR", raising=False)
+
+    assert whatsapp._host_media_path("/app/store/123@s.whatsapp.net/voice.ogg") == str(audio)
+    # An existing path, an unrelated path and a file the host lacks stay untouched.
+    assert whatsapp._host_media_path(str(audio)) == str(audio)
+    assert whatsapp._host_media_path("/elsewhere/voice.ogg") == "/elsewhere/voice.ogg"
+    assert whatsapp._host_media_path("/app/store/missing.ogg") == "/app/store/missing.ogg"
+    assert whatsapp._host_media_path(None) is None
+
+
+class TestDisplayTimezone:
+    def test_to_local_converts_utc_to_configured_zone(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        monkeypatch.setattr(whatsapp, "DISPLAY_TZ", ZoneInfo("America/Fortaleza"))
+        ts = datetime.fromisoformat("2026-10-27T20:49:39+00:00")
+        assert whatsapp.to_local(ts).isoformat() == "2026-10-27T17:49:39-03:00"

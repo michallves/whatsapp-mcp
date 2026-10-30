@@ -1102,6 +1102,19 @@ func extractTextContent(msg *waProto.Message) string {
 		return doc.GetCaption()
 	}
 
+	if br := msg.GetButtonsResponseMessage(); br != nil {
+		if t := br.GetSelectedDisplayText(); t != "" {
+			return t
+		}
+	}
+	if tbr := msg.GetTemplateButtonReplyMessage(); tbr != nil {
+		if t := tbr.GetSelectedDisplayText(); t != "" {
+			return t
+		}
+	}
+	if t := describeInteractive(msg); t != "" {
+		return t
+	}
 	// WhatsApp Business templates arrive hydrated — body lives in
 	// HydratedTemplate.HydratedContentText. Without this branch every
 	// template-sent message (e.g. WABA Connect Hrms_* notifications)
@@ -1121,29 +1134,6 @@ func extractTextContent(msg *waProto.Message) string {
 			return t
 		}
 	}
-	if ia := msg.GetInteractiveMessage(); ia != nil {
-		if body := ia.GetBody(); body != nil {
-			if t := body.GetText(); t != "" {
-				return t
-			}
-		}
-	}
-	if lst := msg.GetListMessage(); lst != nil {
-		if t := lst.GetDescription(); t != "" {
-			return t
-		}
-	}
-	if br := msg.GetButtonsResponseMessage(); br != nil {
-		if t := br.GetSelectedDisplayText(); t != "" {
-			return t
-		}
-	}
-	if tbr := msg.GetTemplateButtonReplyMessage(); tbr != nil {
-		if t := tbr.GetSelectedDisplayText(); t != "" {
-			return t
-		}
-	}
-
 	return ""
 }
 
@@ -2631,6 +2621,35 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 			senderJID = chatJID
 		}
 		msg := client.BuildReaction(chatJID, senderJID, req.MessageID, *req.Emoji)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := client.SendMessage(context.Background(), chatJID, msg); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+
+	mux.HandleFunc("/api/interactive-reply", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req InteractiveReplyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Recipient == "" || req.Kind == "" {
+			http.Error(w, "recipient and kind are required", http.StatusBadRequest)
+			return
+		}
+		chatJID, err := types.ParseJID(req.Recipient)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid recipient JID: %v", err), http.StatusBadRequest)
+			return
+		}
+		msg, err := buildInteractiveReply(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if _, err := client.SendMessage(context.Background(), chatJID, msg); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)

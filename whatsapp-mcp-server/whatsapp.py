@@ -3,8 +3,9 @@ import os
 import os.path
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -21,6 +22,23 @@ WHATSMEOW_DB_PATH = os.getenv(
     os.path.join(_DEFAULT_BRIDGE_STORE_DIR, "whatsapp.db"),
 )
 WHATSAPP_API_BASE_URL = os.getenv("WHATSAPP_API_URL", "http://localhost:8080/api")
+
+
+def _load_display_tz() -> tzinfo | None:
+    """Timezone used to show message times (IANA name); None = system local time."""
+    name = os.getenv("WHATSAPP_TIMEZONE", "").strip()
+    return ZoneInfo(name) if name else None
+
+
+DISPLAY_TZ = _load_display_tz()
+
+
+def to_local(dt: datetime) -> datetime:
+    """Convert a stored timestamp (UTC offset in the DB) to the display timezone."""
+    if dt.tzinfo is None:  # no offset to convert from; leave as stored
+        return dt
+    return dt.astimezone(DISPLAY_TZ)
+
 
 _BRIDGE_TOKEN_PATH = os.path.join(os.path.dirname(WHATSMEOW_DB_PATH), ".bridge-token")
 
@@ -140,7 +158,7 @@ def msg_to_dict(message: Message, include_sender_name: bool = True) -> dict[str,
 
     return {
         "id": message.id,
-        "timestamp": message.timestamp.isoformat(),
+        "timestamp": to_local(message.timestamp).isoformat(),
         "sender_jid": message.sender,
         "sender_phone": sender_phone,
         "sender_name": sender_name,
@@ -161,11 +179,11 @@ def chat_to_dict(chat: "Chat") -> dict[str, Any]:
         "jid": chat.jid,
         "name": chat.name,
         "is_group": chat.is_group,
-        "last_message_time": chat.last_message_time.isoformat() if chat.last_message_time else None,
+        "last_message_time": to_local(chat.last_message_time).isoformat() if chat.last_message_time else None,
         "last_message": chat.last_message,
         "last_sender": chat.last_sender,
         "last_is_from_me": chat.last_is_from_me,
-        "last_read_time": chat.last_read_time.isoformat() if chat.last_read_time else None,
+        "last_read_time": to_local(chat.last_read_time).isoformat() if chat.last_read_time else None,
         "unread": chat.unread,
     }
 
@@ -380,11 +398,12 @@ def get_sender_name(sender_jid: str) -> str:
 def format_message(message: Message, show_chat_info: bool = True) -> None:
     """Print a single message with consistent formatting."""
     output = ""
+    local_ts = to_local(message.timestamp)
 
     if show_chat_info and message.chat_name:
-        output += f"[{message.timestamp:%Y-%m-%d %H:%M:%S}] Chat: {message.chat_name} "
+        output += f"[{local_ts:%Y-%m-%d %H:%M:%S}] Chat: {message.chat_name} "
     else:
-        output += f"[{message.timestamp:%Y-%m-%d %H:%M:%S}] "
+        output += f"[{local_ts:%Y-%m-%d %H:%M:%S}] "
 
     content_prefix = ""
     if hasattr(message, "media_type") and message.media_type:
@@ -1266,6 +1285,25 @@ def mark_messages_read(
         return False, f"Unexpected error: {str(e)}"
 
 
+def _host_media_path(path: str | None) -> str | None:
+    """Translate a path reported by a containerised bridge into the host's path.
+
+    The bridge answers with the path it sees. When it runs in Docker with the
+    store mounted at /app/store, that path does not exist on the host, where
+    the same file lives under the store directory next to messages.db.
+    Paths that already exist, or that fall outside the container store, are
+    returned unchanged.
+    """
+    if not path or os.path.exists(path):
+        return path
+    container_store = os.getenv("WHATSAPP_BRIDGE_CONTAINER_STORE_DIR", "/app/store").rstrip("/")
+    if path != container_store and not path.startswith(container_store + "/"):
+        return path
+    host_store = os.path.dirname(os.path.abspath(MESSAGES_DB_PATH))
+    mapped = os.path.normpath(os.path.join(host_store, path[len(container_store) :].lstrip("/")))
+    return mapped if os.path.exists(mapped) else path
+
+
 def download_media(message_id: str, chat_jid: str) -> str | None:
     """Download media from a message and return the local file path.
 
@@ -1285,7 +1323,7 @@ def download_media(message_id: str, chat_jid: str) -> str | None:
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
-                path = result.get("path")
+                path = _host_media_path(result.get("path"))
                 print(f"Media downloaded successfully: {path}")
                 return path
             else:
@@ -1304,3 +1342,43 @@ def download_media(message_id: str, chat_jid: str) -> str | None:
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return None
+
+
+def send_interactive_reply(
+    recipient: str,
+    kind: str,
+    option_id: str = "",
+    title: str = "",
+    message_id: str = "",
+    sender_jid: str = "",
+    index: int = 0,
+    name: str = "",
+    params_json: str = "",
+) -> tuple[bool, str]:
+    """Answer an interactive message (button, list row, template or native-flow quick reply).
+
+    kind is one of "button", "list", "template", "native_flow". option_id and title
+    come from the "[... id=...]" markers shown in the interactive message content.
+    """
+    try:
+        if not recipient:
+            return False, "Recipient must be provided"
+        if kind not in ("button", "list", "template", "native_flow"):
+            return False, "kind must be one of: button, list, template, native_flow"
+        payload: dict[str, Any] = {
+            "recipient": recipient,
+            "kind": kind,
+            "option_id": option_id,
+            "title": title,
+            "message_id": message_id,
+            "sender_jid": sender_jid,
+            "index": index,
+            "name": name,
+            "params_json": params_json,
+        }
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/interactive-reply", json=payload, headers=_bridge_headers())
+        if response.status_code == 200 and response.json().get("ok"):
+            return True, "Interactive reply sent"
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+    except requests.RequestException as e:
+        return False, f"Request error: {e}"
