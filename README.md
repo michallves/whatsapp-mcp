@@ -1,6 +1,6 @@
 # WhatsApp MCP Server
 
-[![CI](https://github.com/verygoodplugins/whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/verygoodplugins/whatsapp-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/michallves/whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/michallves/whatsapp-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Go 1.26+](https://img.shields.io/badge/go-1.26+-00ADD8.svg)](https://go.dev/)
@@ -8,6 +8,93 @@
 A Model Context Protocol (MCP) server for WhatsApp, enabling Claude to read and send WhatsApp messages.
 
 > Originally created by [Luke Harries](https://github.com/lharries/whatsapp-mcp). Maintained by [Very Good Plugins](https://verygoodplugins.com/?utm_source=github).
+
+## What this fork changes
+
+This is an independent copy of [verygoodplugins/whatsapp-mcp](https://github.com/verygoodplugins/whatsapp-mcp)
+(itself a fork of [lharries/whatsapp-mcp](https://github.com/lharries/whatsapp-mcp)), kept under the
+original MIT license. Everything in the upstream README below still applies; this section lists what
+was added on top.
+
+| Change | Where |
+|---|---|
+| Run the bridge in Docker | `whatsapp-bridge/Dockerfile`, `whatsapp-bridge/docker-compose.yml` |
+| Serve the MCP over HTTP behind a secret URL | `whatsapp-mcp-server/serve_http.py` |
+| Show message times in your timezone | `WHATSAPP_TIMEZONE` |
+| Download profile pictures of contacts and groups | `get_profile_picture`, `get_group_profile_pictures` |
+| Answer buttons, lists and templates | `reply_to_interactive`, `POST /api/interactive-reply` |
+| Clearer transcription errors | `whatsapp-mcp-server/transcription.py` |
+
+### Bridge in Docker
+
+The bridge image builds the Go binary and bundles `ffmpeg`. The container uses the host network (REST
+API on `127.0.0.1:8080`) and mounts `whatsapp-bridge/store/` at `/app/store`, so the session and
+messages survive rebuilds.
+
+```bash
+cd whatsapp-bridge
+echo "WHATSAPP_BRIDGE_TOKEN=$(openssl rand -hex 32)" > .env
+docker compose up -d --build
+docker compose logs -f bridge   # scan the QR code on first start
+```
+
+The Python MCP server reads `messages.db` straight from the store on the host. Media paths the bridge
+reports (`/app/store/...`) are mapped back to the host store automatically; set
+`WHATSAPP_BRIDGE_CONTAINER_STORE_DIR` if you mount it elsewhere. The compose file starts the bridge
+with `--full-history-pair`, which only takes effect on a fresh pair and is ignored for an already paired
+session (see [Requesting full history](#requesting-full-history)).
+
+Known limitation: the bridge only sees `store/`, so `send_file` with a host path is rejected inside
+Docker. Outbound media must live under `store/.local/share/whatsapp-mcp/outbox/` and be sent with its
+container path directly through `POST /api/send`.
+
+### MCP over HTTP
+
+`serve_http.py` exposes the same tools over streamable HTTP on `127.0.0.1:8201` (`PORT` to change it).
+There is no OAuth: access is controlled by a secret token in the URL path, and every other path
+answers 404.
+
+```bash
+openssl rand -hex 32 > ~/.config/whatsapp-mcp-http.token && chmod 600 ~/.config/whatsapp-mcp-http.token
+cd whatsapp-mcp-server
+WHATSAPP_MCP_HTTP_TOKEN_FILE=~/.config/whatsapp-mcp-http.token uv run python serve_http.py
+# MCP endpoint: https://<your-host>/<token>/mcp
+```
+
+Put it behind HTTPS (for example a Cloudflare tunnel) before using it from a remote client, and treat
+the full URL as a password. DNS-rebinding protection is turned off because the `Host` header comes from
+the tunnel; the token is the only protection. Run it under systemd or similar to keep it up (restart the
+unit after updating the code so new tools appear).
+
+### Timezone
+
+The database stores UTC. Set `WHATSAPP_TIMEZONE` to an IANA name (for example `America/Fortaleza`) so the
+times returned by the tools are local; empty means the system timezone.
+
+### Profile pictures
+
+| Tool | What it does |
+|---|---|
+| `get_profile_picture(jid, preview, save_to)` | Downloads the photo of a contact or group |
+| `get_group_profile_pictures(group_jid, dest_dir, preview)` | Downloads the photo of every member, named `<name>.jpg` |
+
+Photos are stored in `store/profile-pictures/` with the picture ID in the name, so an unchanged photo is
+not downloaded twice. Each result has a `status`: `ok`, `no_picture` (none set), `private` (the contact
+hides it from people who do not have them as a contact), `rate_limited`, `not_connected`, `invalid_jid` or
+`error`. The bridge side is `POST /api/profile-picture` and `POST /api/group-participants`.
+
+### Interactive messages
+
+Buttons, list rows, templates and native-flow quick replies are now shown in message text with markers
+that include their ids, and `reply_to_interactive` answers them (`POST /api/interactive-reply` on the
+bridge).
+
+### Syncing with upstream
+
+```bash
+git remote add upstream https://github.com/verygoodplugins/whatsapp-mcp.git
+git fetch upstream && git merge upstream/main
+```
 
 <p align="center">
   <a href="https://github.com/user-attachments/assets/9475af1d-2369-4315-9ccc-823dba2c5c32"><strong>Watch the WhatsApp MCP demo video</strong></a>
@@ -43,7 +130,7 @@ A Model Context Protocol (MCP) server for WhatsApp, enabling Claude to read and 
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/verygoodplugins/whatsapp-mcp.git
+   git clone https://github.com/michallves/whatsapp-mcp.git
    cd whatsapp-mcp
    ```
 
