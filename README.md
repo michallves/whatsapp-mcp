@@ -1213,7 +1213,7 @@ This project is a maintained fork of [lharries/whatsapp-mcp](https://github.com/
 - Live capture of incoming voice/video calls into a `calls` table
 - `--full-history-pair` flag to request extended history at pair time
 - Resilience: recovers from `StreamReplaced` session conflicts; pinned `anyio` to dodge a cancel-scope regression
-- CI/CD with GitHub Actions, Release Please for automated versioning, and Dependabot
+- CI/CD with GitHub Actions, Release Please for automated versioning and CodeQL
 
 The full release-by-release list lives in [CHANGELOG.md](CHANGELOG.md).
 

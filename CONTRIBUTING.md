@@ -44,7 +44,7 @@ uv run main.py
 - Small, focused bug fixes with a clear reproduction.
 - Test additions for existing code.
 - Documentation improvements.
-- Dependency updates (most are auto-handled by Dependabot).
+- Dependency updates.
 - Reliability fixes for the Go bridge (reconnect, race conditions, JID resolution).
 
 ## What needs more discussion

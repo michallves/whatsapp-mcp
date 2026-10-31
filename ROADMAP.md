@@ -41,7 +41,7 @@ These areas accept new PRs and issues. Bugfixes here are always welcome.
 
 - Bind defaults that fail safe (localhost first).
 - Auditing of file/path inputs.
-- Dependency hygiene (Dependabot, govulncheck, CodeQL, bandit).
+- Dependency hygiene (govulncheck, CodeQL, bandit).
 
 ### CI / release
 
