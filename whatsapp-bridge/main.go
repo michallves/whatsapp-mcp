@@ -2114,9 +2114,13 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	// pipeline can analyse the image content.
 	hasText := content != ""
 	hasImage := mediaType == "image"
+	// Optional heads-up for audio, video and documents (WEBHOOK_NOTIFY_MEDIA=true):
+	// the payload carries the message ID and media type but no file contents, so
+	// the receiver can fetch the file on demand through the MCP tools.
+	notifyMedia := webhookNotifiesMedia(mediaType)
 
-	if shouldForward && (hasText || hasImage) {
-		if hasImage {
+	if shouldForward && (hasText || hasImage || notifyMedia) {
+		if hasImage || notifyMedia {
 			SendWebhookWithMedia(
 				sender, content, chatJID, msg.Info.IsFromMe,
 				quotedMessageId, quotedSender, quotedContent, quotedIsFromMe, mentionedJIDs,

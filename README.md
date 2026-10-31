@@ -23,6 +23,7 @@ was added on top.
 | Show message times in your timezone | `WHATSAPP_TIMEZONE` |
 | Download profile pictures of contacts and groups | `get_profile_picture`, `get_group_profile_pictures` |
 | Answer buttons, lists and templates | `reply_to_interactive`, `POST /api/interactive-reply` |
+| Optional webhook heads-up for audio, video and documents (`WEBHOOK_NOTIFY_MEDIA=true`): message ID and type only, no file contents | `whatsapp-bridge/webhook.go` |
 | Clearer transcription errors | `whatsapp-mcp-server/transcription.py` |
 
 ### Bridge in Docker

@@ -9,6 +9,9 @@ services:
       HOME: /app/store
       WHATSAPP_BRIDGE_TOKEN: ${WHATSAPP_BRIDGE_TOKEN}
       XDG_DATA_HOME: /app/store/data
+      WEBHOOK_ENABLED: ${WEBHOOK_ENABLED:-true}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_NOTIFY_MEDIA: ${WEBHOOK_NOTIFY_MEDIA:-false}
     volumes:
       - ./store:/app/store
     command: ["--full-history-pair"]

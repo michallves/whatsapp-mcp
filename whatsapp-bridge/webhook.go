@@ -73,6 +73,18 @@ type WebhookPayload struct {
 	ReactionRemoved     *bool   `json:"reactionRemoved,omitempty"`
 }
 
+// webhookNotifiesMedia reports whether a message of the given media type
+// should still reach the webhook when it has no text and is not an image.
+// Opt-in via WEBHOOK_NOTIFY_MEDIA=true, so receivers written against the
+// original behaviour (text and images only) are unaffected.
+func webhookNotifiesMedia(mediaType string) bool {
+	switch mediaType {
+	case "audio", "video", "document":
+		return getEnvBool("WEBHOOK_NOTIFY_MEDIA", false)
+	}
+	return false
+}
+
 // webhooksEnabled reports whether webhook processing is enabled. Keep this
 // separate from sendWebhookPayload so media callers can avoid their webhook-only
 // file work when delivery is disabled.
