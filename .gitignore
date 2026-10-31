@@ -25,6 +25,7 @@ whatsapp-bridge/whatsapp-client
 
 # WhatsApp data (personal/sensitive)
 whatsapp-bridge/store/
+whatsapp-bridge/store.bak-*/
 
 # Python
 __pycache__/
