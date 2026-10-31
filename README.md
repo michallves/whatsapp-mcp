@@ -35,6 +35,7 @@ messages survive rebuilds.
 ```bash
 cd whatsapp-bridge
 echo "WHATSAPP_BRIDGE_TOKEN=$(openssl rand -hex 32)" > .env
+mkdir -p ~/.local/share/whatsapp-mcp/outbox   # must exist first, or compose refuses to start
 docker compose up -d --build
 docker compose logs -f bridge   # scan the QR code on first start
 ```
@@ -45,9 +46,12 @@ reports (`/app/store/...`) are mapped back to the host store automatically; set
 with `--full-history-pair`, which only takes effect on a fresh pair and is ignored for an already paired
 session (see [Requesting full history](#requesting-full-history)).
 
-Known limitation: the bridge only sees `store/`, so `send_file` with a host path is rejected inside
-Docker. Outbound media must live under `store/.local/share/whatsapp-mcp/outbox/` and be sent with its
-container path directly through `POST /api/send`.
+Outbound media goes in the host outbox, `~/.local/share/whatsapp-mcp/outbox`. Compose mounts it
+read-only at the same absolute path and sets `WHATSAPP_MEDIA_ROOTS` to it, so `send_file` and
+`send_audio_message` work with host paths; anything else is still rejected with 403. It must be a real
+directory (not a symlink) readable by UID 1000, the user the container runs as, and compose must run
+as its owner, not through `sudo`, because the path comes from the calling shell's `HOME`. Set a
+different `user:` in the compose file if your UID differs.
 
 ### MCP over HTTP
 
@@ -361,7 +365,8 @@ attachments sent by older bridge versions or prevent WhatsApp media expiry.
 
 The bridge only reads files inside configured media roots. By default this is
 `~/.local/share/whatsapp-mcp/outbox`; set `WHATSAPP_MEDIA_ROOTS` to allow
-additional absolute directories.
+additional absolute directories. `send_audio_message` writes its converted `.ogg` temporarily next to
+the source file, so that directory must be writable and inside a media root.
 
 For documents, recipients receive only the filename portion of `file_path`;
 parent directories are not exposed.

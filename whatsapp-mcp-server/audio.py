@@ -68,6 +68,11 @@ def convert_to_opus_ogg_temp(input_file, bitrate="32k", sample_rate=24000):
     """
     Convert an audio file to Opus format in an Ogg container and store in a temporary file.
 
+    The file is created next to the real input file, not in the system temp dir: the
+    bridge only reads from its media roots, and /tmp is not visible to it in Docker.
+    Resolving symlinks first means a link inside the outbox pointing elsewhere does not
+    get its target's audio converted into the outbox, past the bridge's guard.
+
     Args:
         input_file (str): Path to the input audio file
         bitrate (str, optional): Target bitrate for Opus encoding (default: "32k")
@@ -81,7 +86,8 @@ def convert_to_opus_ogg_temp(input_file, bitrate="32k", sample_rate=24000):
         RuntimeError: If the ffmpeg conversion fails
     """
     # Create a temporary file with .ogg extension
-    temp_file = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
+    output_dir = os.path.dirname(os.path.realpath(input_file))
+    temp_file = tempfile.NamedTemporaryFile(suffix=".ogg", dir=output_dir, delete=False)
     temp_file.close()
 
     try:

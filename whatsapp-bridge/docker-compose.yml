@@ -1,3 +1,8 @@
+# Host outbox, mounted at the same absolute path so the paths the MCP server sends
+# on the host also resolve here. Interpolated from the shell running compose (the
+# service's HOME below does not apply): run it as the user owning the outbox, not sudo.
+x-outbox: &outbox ${HOME:?HOME must be set to locate the outbox}/.local/share/whatsapp-mcp/outbox
+
 services:
   bridge:
     build: .
@@ -12,6 +17,14 @@ services:
       WEBHOOK_ENABLED: ${WEBHOOK_ENABLED:-true}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
       WEBHOOK_NOTIFY_MEDIA: ${WEBHOOK_NOTIFY_MEDIA:-false}
+      WHATSAPP_MEDIA_ROOTS: *outbox
     volumes:
       - ./store:/app/store
+      - type: bind
+        source: *outbox
+        target: *outbox
+        read_only: true
+        bind:
+          # Fail instead of letting Docker create it as root: mkdir -p it first.
+          create_host_path: false
     command: ["--full-history-pair"]
