@@ -105,6 +105,7 @@ A failing blocking job is a hard block — fix it or explain in the PR why it's 
 | `WHATSAPP_MEDIA_ROOTS` | `~/.local/share/whatsapp-mcp/outbox` | Path-list of directories allowed for outbound media files |
 | `WHATSAPP_DEVICE_NAME` | `whatsmeow` (whatsmeow default) | Linked-device label shown in WhatsApp > Linked Devices. Applied at pair time only (`store.DeviceProps.Os`); re-pair to change |
 | `WHATSAPP_TIMEZONE` | system local time | IANA timezone for message/chat times returned by the MCP tools (DB stays in UTC) |
+| `WHATSAPP_ALIASES_PATH` | `contact_aliases.json` next to `messages.db` | Contact aliases kept by the MCP only (`set_contact_alias`); never sent to WhatsApp |
 | `WHATSAPP_MCP_TRANSPORT` | `stdio` | MCP transport to serve clients: `stdio`, `http`, or `sse` |
 | `WHATSAPP_MCP_HOST` | `127.0.0.1` | Bind address for the `http`/`sse` transports |
 | `WHATSAPP_MCP_PORT` | `8000` | Port for the `http`/`sse` transports |

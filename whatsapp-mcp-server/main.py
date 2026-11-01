@@ -46,6 +46,9 @@ from whatsapp import (
     list_chats as whatsapp_list_chats,
 )
 from whatsapp import (
+    list_contact_aliases as whatsapp_list_contact_aliases,
+)
+from whatsapp import (
     list_messages as whatsapp_list_messages,
 )
 from whatsapp import (
@@ -68,6 +71,9 @@ from whatsapp import (
 )
 from whatsapp import (
     send_reaction as whatsapp_send_reaction,
+)
+from whatsapp import (
+    set_contact_alias as whatsapp_set_contact_alias,
 )
 
 # Initialize FastMCP server. Env-var handling is deferred to the __main__ block
@@ -505,6 +511,28 @@ def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     """
     success, status_message = whatsapp_audio_voice_message(recipient, media_path)
     return {"success": success, "message": status_message}
+
+
+@mcp.tool()
+def set_contact_alias(jid: str, alias: str) -> dict[str, Any]:
+    """Set the display name the MCP shows for a contact, e.g. "Manoel Lopes - ALMA LABS - Coord".
+
+    The alias is kept only by the MCP (contact_aliases.json next to messages.db). It does
+    not change the phone's address book. It is used by search_contacts, list_chats and
+    message senders, and searching also matches alias text such as the project or role.
+    An empty alias removes it.
+
+    Args:
+        jid: Contact JID (number@s.whatsapp.net or number@lid) or phone number
+        alias: Name to show; empty to remove the alias
+    """
+    return whatsapp_set_contact_alias(jid, alias)
+
+
+@mcp.tool()
+def list_contact_aliases() -> dict[str, str]:
+    """List every contact alias as {phone number: display name}."""
+    return whatsapp_list_contact_aliases()
 
 
 @mcp.tool()

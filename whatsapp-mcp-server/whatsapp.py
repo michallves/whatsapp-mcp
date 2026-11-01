@@ -178,7 +178,7 @@ def chat_to_dict(chat: "Chat") -> dict[str, Any]:
     """Convert a Chat dataclass to a dictionary for JSON serialization."""
     return {
         "jid": chat.jid,
-        "name": chat.name,
+        "name": chat.name if chat.is_group else (get_alias(chat.jid) or chat.name),
         "is_group": chat.is_group,
         "last_message_time": to_local(chat.last_message_time).isoformat() if chat.last_message_time else None,
         "last_message": chat.last_message,
@@ -191,7 +191,11 @@ def chat_to_dict(chat: "Chat") -> dict[str, Any]:
 
 def contact_to_dict(contact: "Contact") -> dict[str, Any]:
     """Convert a Contact dataclass to a dictionary for JSON serialization."""
-    return {"phone_number": contact.phone_number, "name": contact.name, "jid": contact.jid}
+    return {
+        "phone_number": contact.phone_number,
+        "name": get_alias(contact.jid) or contact.name,
+        "jid": contact.jid,
+    }
 
 
 def _last_read_time_select(cursor: sqlite3.Cursor, table_alias: str) -> str:
@@ -334,7 +338,75 @@ def _resolve_name_from_whatsmeow(jid: str) -> str | None:
             conn.close()
 
 
+ALIASES_PATH = os.getenv(
+    "WHATSAPP_ALIASES_PATH",
+    os.path.join(os.path.dirname(MESSAGES_DB_PATH), "contact_aliases.json"),
+)
+
+
+def _alias_key(jid_or_phone: str) -> str:
+    """Phone digits for a JID, phone number or LID, so one alias covers every form."""
+    prefix = jid_or_phone.split("@")[0] if "@" in jid_or_phone else jid_or_phone
+    digits = "".join(ch for ch in prefix if ch.isdigit())
+    if not digits:
+        return ""
+    if "@" not in jid_or_phone or jid_or_phone.endswith("@lid"):
+        phone = _resolve_lid_to_phone(digits)
+        if phone:
+            return phone
+    return digits
+
+
+def load_aliases() -> dict[str, str]:
+    """Contact aliases kept by the MCP only (phone digits -> display name)."""
+    try:
+        with open(ALIASES_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def get_alias(jid_or_phone: str) -> str | None:
+    key = _alias_key(jid_or_phone)
+    return load_aliases().get(key) if key else None
+
+
+def set_contact_alias(jid: str, alias: str) -> dict[str, Any]:
+    """Set (or, with an empty alias, remove) the display name the MCP shows for a contact.
+
+    Stored only in contact_aliases.json next to messages.db. Nothing is sent to
+    WhatsApp, so it never changes the phone's address book.
+    """
+    key = _alias_key(jid or "")
+    if not key:
+        return {"success": False, "message": "jid must contain a phone number"}
+    aliases = load_aliases()
+    alias = (alias or "").strip()
+    previous = aliases.get(key)
+    if alias:
+        aliases[key] = alias
+    else:
+        aliases.pop(key, None)
+    tmp = f"{ALIASES_PATH}.tmp"
+    try:
+        os.makedirs(os.path.dirname(ALIASES_PATH) or ".", exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(aliases, f, ensure_ascii=False, indent=1, sort_keys=True)
+        os.replace(tmp, ALIASES_PATH)
+    except OSError as e:
+        return {"success": False, "message": f"Could not save aliases: {e}"}
+    return {"success": True, "phone": key, "alias": alias or None, "previous": previous}
+
+
+def list_contact_aliases() -> dict[str, str]:
+    return load_aliases()
+
+
 def get_sender_name(sender_jid: str) -> str:
+    alias = get_alias(sender_jid)
+    if alias:
+        return alias
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
         cursor = conn.cursor()
@@ -827,6 +899,15 @@ def search_contacts(query: str) -> list[dict[str, Any]]:
         finally:
             if "conn2" in locals():
                 conn2.close()
+
+    # 3) Contacts found only through an alias (e.g. searching by project or role)
+    needle = query.casefold()
+    known_phones = {c["phone_number"] for c in result}
+    for phone, alias in load_aliases().items():
+        if phone in known_phones:
+            continue
+        if needle in alias.casefold() or needle in phone:
+            result.append(contact_to_dict(Contact(phone_number=phone, name=alias, jid=f"{phone}@s.whatsapp.net")))
 
     return result
 

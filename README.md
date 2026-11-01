@@ -22,6 +22,7 @@ was added on top.
 | Serve the MCP over HTTP behind a secret URL | `whatsapp-mcp-server/serve_http.py` |
 | Show message times in your timezone | `WHATSAPP_TIMEZONE` |
 | Download profile pictures of contacts and groups | `get_profile_picture`, `get_group_profile_pictures` |
+| Show your own names for contacts (project, role) without touching the phone's address book | `set_contact_alias`, `list_contact_aliases` |
 | Answer buttons, lists and templates | `reply_to_interactive`, `POST /api/interactive-reply` |
 | Optional webhook heads-up for audio, video and documents (`WEBHOOK_NOTIFY_MEDIA=true`): message ID and type only, no file contents | `whatsapp-bridge/webhook.go` |
 | Clearer transcription errors | `whatsapp-mcp-server/transcription.py` |
@@ -75,6 +76,16 @@ unit after updating the code so new tools appear).
 
 The database stores UTC. Set `WHATSAPP_TIMEZONE` to an IANA name (for example `America/Fortaleza`) so the
 times returned by the tools are local; empty means the system timezone.
+
+### Contact aliases
+
+WhatsApp only lets the phone write the address book, so linked devices cannot rename contacts. Aliases fill
+that gap on the MCP side: `set_contact_alias(jid, alias)` stores a display name such as
+`Manoel Lopes - ALMA LABS - Coord`, and `list_contact_aliases()` lists them. They are kept in
+`contact_aliases.json` next to `messages.db` (override with `WHATSAPP_ALIASES_PATH`), keyed by phone number, so one
+alias covers the phone JID and the LID of the same person. `search_contacts`, `list_chats` and message senders show the
+alias, and searching also matches its text, so looking for a project or a role finds the people tagged with it.
+An empty alias removes it. Nothing is sent to WhatsApp.
 
 ### Profile pictures
 
@@ -598,6 +609,7 @@ Copy `.env.example` to `.env` and configure as needed:
 | `WHATSAPP_MEDIA_ROOTS` | `~/.local/share/whatsapp-mcp/outbox`     | Path-list of directories allowed for outbound media files |
 | `WHATSAPP_DEVICE_NAME` | `whatsmeow` (whatsmeow default)          | Label shown for this connection under WhatsApp > Linked Devices. Set to a recognisable name. Applies at pair time only (re-pair to change) |
 | `WHATSAPP_TIMEZONE` | system local time | IANA timezone (e.g. `America/Fortaleza`) used for message and chat times returned by the MCP tools; the database keeps UTC |
+| `WHATSAPP_ALIASES_PATH` | `contact_aliases.json` next to `messages.db` | File that stores contact aliases set with `set_contact_alias` |
 | `WHATSAPP_MCP_TRANSPORT` | `stdio`                                | MCP transport to serve clients: `stdio`, `http`, or `sse` |
 | `WHATSAPP_MCP_HOST`    | `127.0.0.1`                              | Bind address for the `http`/`sse` transports |
 | `WHATSAPP_MCP_PORT`    | `8000`                                   | Port for the `http`/`sse` transports |
