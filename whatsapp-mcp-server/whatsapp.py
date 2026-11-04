@@ -1593,9 +1593,11 @@ def _stage_for_bridge(path: str) -> str:
     """Return a path the bridge accepts, copying the file into the first media root if needed."""
     import shutil
 
+    if err := _check_server_path(path, "image_path"):
+        raise FileNotFoundError(err + " Send the image with image_base64 or image_url instead.")
     real = os.path.realpath(os.path.expanduser(path))
     if not os.path.isfile(real):
-        raise FileNotFoundError(f"File not found: {path}")
+        raise FileNotFoundError(f"File not found on the machine running this MCP server: {path}")
     roots = _media_roots()
     for root in roots:
         if real == root or real.startswith(root + os.sep):
