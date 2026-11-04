@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -35,6 +36,16 @@ func (f *fakeGroupAPI) CreateGroup(_ context.Context, r whatsmeow.ReqCreateGroup
 	info.Name = r.Name
 	info.IsParent = r.IsParent
 	info.LinkedParentJID = r.LinkedParentJID
+	return info, nil
+}
+func (f *fakeGroupAPI) CreateCommunity(_ context.Context, name, desc string) (*types.GroupInfo, error) {
+	f.rec("community " + name + "|" + desc)
+	if f.err != nil {
+		return nil, f.err
+	}
+	info := &types.GroupInfo{JID: types.NewJID("120363000000000001", types.GroupServer)}
+	info.Name = name
+	info.IsParent = true
 	return info, nil
 }
 func (f *fakeGroupAPI) LinkGroup(_ context.Context, p, c types.JID) error {
@@ -177,12 +188,37 @@ func TestCreateGroupNormalizesMembersAndLinksParent(t *testing.T) {
 
 func TestCreateCommunity(t *testing.T) {
 	f := &fakeGroupAPI{connected: true}
-	st, resp := run(t, f, nil, GroupManageRequest{Action: "create_community", Name: "Comunidade", ParentJID: "ignored"})
-	if st != 200 || !f.created[0].IsParent || !resp.Group.IsCommunity {
+	st, resp := run(t, f, nil, GroupManageRequest{Action: "create_community", Name: "Comunidade", Description: " sobre ", ParentJID: "ignored", Participants: []string{"5585999990000"}})
+	if st != 200 || !resp.Group.IsCommunity {
 		t.Fatalf("got %d %+v", st, resp)
 	}
-	if !f.created[0].LinkedParentJID.IsEmpty() {
-		t.Fatal("a community must not be linked to a parent")
+	if strings.Join(f.calls, ",") != "community Comunidade|sobre,add" {
+		t.Fatalf("calls %v", f.calls)
+	}
+	if len(f.created) != 0 {
+		t.Fatal("a community must not go through CreateGroup")
+	}
+}
+
+func TestCommunityCreateNodeShape(t *testing.T) {
+	n := communityCreateNode("rid", "Com", "did", "desc")
+	if n.Tag != "iq" || n.Attrs["xmlns"] != "w:g2" || n.Attrs["type"] != "set" {
+		t.Fatalf("bad iq %+v", n.Attrs)
+	}
+	create := n.Content.([]waBinary.Node)[0]
+	if create.Attrs["subject"] != "Com" {
+		t.Fatalf("bad subject %+v", create.Attrs)
+	}
+	var tags []string
+	for _, c := range create.Content.([]waBinary.Node) {
+		tags = append(tags, c.Tag)
+	}
+	if strings.Join(tags, ",") != "description,parent,allow_non_admin_sub_group_creation,create_general_chat" {
+		t.Fatalf("tags %v", tags)
+	}
+	noDesc := communityCreateNode("rid", "Com", "did", "").Content.([]waBinary.Node)[0].Content.([]waBinary.Node)
+	if noDesc[0].Tag != "parent" {
+		t.Fatalf("empty description must be omitted, got %s first", noDesc[0].Tag)
 	}
 }
 

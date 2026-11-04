@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -95,6 +97,7 @@ type GroupManageResponse struct {
 type groupAPI interface {
 	IsConnected() bool
 	CreateGroup(ctx context.Context, req whatsmeow.ReqCreateGroup) (*types.GroupInfo, error)
+	CreateCommunity(ctx context.Context, name, description string) (*types.GroupInfo, error)
 	LinkGroup(ctx context.Context, parent, child types.JID) error
 	UnlinkGroup(ctx context.Context, parent, child types.JID) error
 	LeaveGroup(ctx context.Context, jid types.JID) error
@@ -275,10 +278,25 @@ func runGroupManage(ctx context.Context, api groupAPI, roots []string, req Group
 		if err != nil {
 			return bad("%v", err)
 		}
-		creq := whatsmeow.ReqCreateGroup{Name: name, Participants: members}
 		if action == "create_community" {
-			creq.GroupParent = types.GroupParent{IsParent: true}
-		} else {
+			info, err := api.CreateCommunity(ctx, name, strings.TrimSpace(req.Description))
+			if err != nil {
+				return fail("Failed to create community", err)
+			}
+			note := ""
+			if len(members) > 0 {
+				res, err := api.UpdateGroupParticipants(ctx, info.JID, members, whatsmeow.ParticipantChangeAdd)
+				if err != nil {
+					note = fmt.Sprintf(" (created, but adding members failed: %v)", err)
+				} else {
+					info.Participants = append(info.Participants, res...)
+				}
+			}
+			d := groupDetails(info, true)
+			return http.StatusOK, GroupManageResponse{Success: true, Message: "Created " + info.JID.String() + note, Group: &d}
+		}
+		creq := whatsmeow.ReqCreateGroup{Name: name, Participants: members}
+		{
 			if strings.TrimSpace(req.ParentJID) != "" {
 				parent, err := parseGroupJID(req.ParentJID)
 				if err != nil {
@@ -586,6 +604,69 @@ func runGroupManage(ctx context.Context, api groupAPI, roots []string, req Group
 	}
 }
 
+// liveGroupAPI is the real client plus the community creation whatsmeow's own
+// CreateGroup gets wrong: WhatsApp answers bad-request when the create query
+// for a community carries the member_add_mode, ephemeral and approval nodes it
+// adds to every group.
+type liveGroupAPI struct{ *whatsmeow.Client }
+
+// communityCreateNode builds the query WhatsApp Web sends to create a community.
+func communityCreateNode(reqID, name, descID, description string) waBinary.Node {
+	content := []waBinary.Node{}
+	if description != "" {
+		content = append(content, waBinary.Node{
+			Tag:     "description",
+			Attrs:   waBinary.Attrs{"id": descID},
+			Content: []waBinary.Node{{Tag: "body", Content: []byte(description)}},
+		})
+	}
+	content = append(content,
+		waBinary.Node{Tag: "parent", Attrs: waBinary.Attrs{"default_membership_approval_mode": "request_required"}},
+		waBinary.Node{Tag: "allow_non_admin_sub_group_creation"},
+		waBinary.Node{Tag: "create_general_chat"},
+	)
+	return waBinary.Node{
+		Tag:   "iq",
+		Attrs: waBinary.Attrs{"id": reqID, "xmlns": "w:g2", "type": "set", "to": types.GroupServerJID},
+		Content: []waBinary.Node{{
+			Tag:     "create",
+			Attrs:   waBinary.Attrs{"subject": name},
+			Content: content,
+		}},
+	}
+}
+
+func (l liveGroupAPI) CreateCommunity(ctx context.Context, name, description string) (*types.GroupInfo, error) {
+	internals := l.DangerousInternals()
+	reqID := internals.GenerateRequestID()
+	waiter := internals.WaitResponse(reqID)
+	if err := internals.SendNode(ctx, communityCreateNode(reqID, name, l.GenerateMessageID(), description)); err != nil {
+		internals.CancelResponse(reqID, waiter)
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		internals.CancelResponse(reqID, waiter)
+		return nil, ctx.Err()
+	case resp := <-waiter:
+		if resp == nil {
+			return nil, errors.New("connection closed while creating the community")
+		}
+		if errNode, ok := resp.GetOptionalChildByTag("error"); ok {
+			return nil, fmt.Errorf("info query returned status %v: %v", errNode.AttrGetter().OptionalString("code"), errNode.AttrGetter().OptionalString("text"))
+		}
+		group, ok := resp.GetOptionalChildByTag("group")
+		if !ok {
+			return nil, errors.New("no group in the create response")
+		}
+		id, _ := group.Attrs["id"].(string)
+		if id == "" {
+			return nil, errors.New("create response has no group id")
+		}
+		return l.GetGroupInfo(ctx, types.NewJID(id, types.GroupServer))
+	}
+}
+
 func registerGroupManageEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, roots []string) {
 	mux.HandleFunc("/api/group-manage", auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -599,7 +680,7 @@ func registerGroupManageEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc)
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		status, resp := runGroupManage(ctx, client, roots, req)
+		status, resp := runGroupManage(ctx, liveGroupAPI{client}, roots, req)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(resp)
