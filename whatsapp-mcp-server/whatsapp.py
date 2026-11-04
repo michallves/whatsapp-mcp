@@ -1,6 +1,7 @@
 import json
 import os
 import os.path
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -1463,6 +1464,8 @@ def get_profile_picture(jid: str, preview: bool = False, save_to: str | None = N
     try:
         if not jid:
             return {"success": False, "status": "invalid_jid", "message": "jid must be provided"}
+        if save_to and (err := _check_server_path(save_to, "save_to")):
+            return {"success": False, "status": "error", "message": err}
         http_status, body = _bridge_post_json("profile-picture", {"jid": jid, "preview": preview})
         if not body.get("success"):
             return {
@@ -1492,6 +1495,8 @@ def get_group_profile_pictures(group_jid: str, dest_dir: str | None = None, prev
     mapping used elsewhere. With dest_dir the pictures are copied there as
     <name-slug>.jpg; otherwise file_path points into the bridge store.
     """
+    if dest_dir and (err := _check_server_path(dest_dir, "dest_dir")):
+        return {"success": False, "message": err}
     try:
         http_status, body = _bridge_post_json("group-participants", {"group_jid": group_jid})
     except requests.RequestException as e:
@@ -1624,11 +1629,39 @@ def group_manage(action: str, **fields: Any) -> dict[str, Any]:
     return body
 
 
-_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+_MAX_REDIRECTS = 3
 
 
-def _fetch_image_url(url: str) -> bytes:
-    """Download an image from a public https URL (private and loopback hosts are refused)."""
+def _looks_like_foreign_path(path: str) -> bool:
+    """True for a Windows drive or UNC path when this server is not Windows."""
+    if os.name == "nt":
+        return False
+    return bool(re.match(r"^[A-Za-z]:[\\/]", path)) or path.startswith("\\\\") or "\\" in path
+
+
+def _check_server_path(path: str, what: str) -> str | None:
+    """Return an error message when path cannot be a path on this server machine."""
+    if _looks_like_foreign_path(path):
+        return (
+            f"{what} must be a path on the machine running this MCP server, not a path from your own "
+            f"computer ({path!r}). A remote client cannot place files here: omit it to keep the file in the bridge store."
+        )
+    return None
+
+
+def image_kind(data: bytes) -> str | None:
+    """Return png, jpeg or webp from the file signature, else None."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _check_public_https(url: str) -> None:
     import ipaddress
     import socket
     from urllib.parse import urlparse
@@ -1640,27 +1673,52 @@ def _fetch_image_url(url: str) -> bytes:
         ip = ipaddress.ip_address(info[4][0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
             raise ValueError("image_url must point to a public host")
-    with requests.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
-        resp.raise_for_status()
-        data = b""
-        for chunk in resp.iter_content(65536):
-            data += chunk
-            if len(data) > _MAX_IMAGE_BYTES:
-                raise ValueError("image is larger than 10 MB")
-    return data
+
+
+def _fetch_image_url(url: str) -> bytes:
+    """Download an image from a public https URL.
+
+    Redirects are followed by hand (at most 3) and every hop is checked again, so a redirect
+    cannot reach a private host or leave https. Private and loopback hosts are refused.
+    """
+    from urllib.parse import urljoin
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        _check_public_https(url)
+        with requests.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
+            if resp.is_redirect or resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                if not location:
+                    raise ValueError("redirect without a Location header")
+                url = urljoin(url, location)
+                continue
+            resp.raise_for_status()
+            declared = resp.headers.get("Content-Length")
+            if declared and declared.isdigit() and int(declared) > _MAX_IMAGE_BYTES:
+                raise ValueError("image is larger than 5 MB")
+            data = b""
+            for chunk in resp.iter_content(65536):
+                data += chunk
+                if len(data) > _MAX_IMAGE_BYTES:
+                    raise ValueError("image is larger than 5 MB")
+            return data
+    raise ValueError("too many redirects")
 
 
 def stage_image_bytes(data: bytes, name_hint: str = "group-photo") -> str:
-    """Write image bytes into the first media root and return the path."""
+    """Validate image bytes (png, jpeg or webp, up to 5 MB) and write them into the first media root."""
     import uuid
 
     if not data:
         raise ValueError("image is empty")
     if len(data) > _MAX_IMAGE_BYTES:
-        raise ValueError("image is larger than 10 MB")
+        raise ValueError("image is larger than 5 MB")
+    kind = image_kind(data)
+    if kind is None:
+        raise ValueError("image must be png, jpeg or webp")
     root = _media_roots()[0]
     os.makedirs(root, exist_ok=True)
-    dest = os.path.join(root, f"{name_hint}-{uuid.uuid4().hex[:8]}.img")
+    dest = os.path.join(root, f"{name_hint}-{uuid.uuid4().hex[:8]}.{'jpg' if kind == 'jpeg' else kind}")
     with open(dest, "wb") as fh:
         fh.write(data)
     return dest

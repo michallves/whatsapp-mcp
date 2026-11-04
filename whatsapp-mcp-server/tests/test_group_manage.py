@@ -3,6 +3,8 @@ import pytest
 import main
 import whatsapp
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+
 
 def _fake_bridge(monkeypatch, answer):
     calls = []
@@ -106,8 +108,8 @@ def test_set_group_photo_from_base64_is_staged_and_cleaned(tmp_path, monkeypatch
         return (200, {"success": True})
 
     _fake_bridge(monkeypatch, answer)
-    out = main.set_group_photo("1@g.us", image_base64=base64.b64encode(b"imgdata").decode())
-    assert out["success"] and seen["bytes"] == b"imgdata"
+    out = main.set_group_photo("1@g.us", image_base64=base64.b64encode(PNG).decode())
+    assert out["success"] and seen["bytes"] == PNG
     assert not (tmp_path / "outbox").joinpath(seen["path"]).exists()
 
 
@@ -122,3 +124,97 @@ def test_set_group_photo_rejects_two_sources_and_bad_base64(monkeypatch):
 def test_image_url_refuses_non_https_and_private_hosts(url):
     with pytest.raises(ValueError):
         whatsapp._fetch_image_url(url)
+
+
+@pytest.mark.parametrize(
+    ("data", "kind"),
+    [
+        (PNG, "png"),
+        (b"\xff\xd8\xff\xe0abc", "jpeg"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "webp"),
+        (b"GIF89a", None),
+        (b"%PDF-1.4", None),
+    ],
+)
+def test_image_kind(data, kind):
+    assert whatsapp.image_kind(data) == kind
+
+
+def test_stage_image_bytes_validates_type_and_size(tmp_path, monkeypatch):
+    monkeypatch.setenv("WHATSAPP_MEDIA_ROOTS", str(tmp_path / "outbox"))
+    with pytest.raises(ValueError, match="png, jpeg or webp"):
+        whatsapp.stage_image_bytes(b"GIF89a....")
+    with pytest.raises(ValueError, match="5 MB"):
+        whatsapp.stage_image_bytes(PNG + b"0" * (5 * 1024 * 1024))
+    with pytest.raises(ValueError, match="empty"):
+        whatsapp.stage_image_bytes(b"")
+    assert whatsapp.stage_image_bytes(PNG).endswith(".png")
+
+
+def test_set_group_photo_base64_with_wrong_type_is_rejected(monkeypatch):
+    import base64
+
+    calls = _fake_bridge(monkeypatch, lambda p: (200, {"success": True}))
+    out = main.set_group_photo("1@g.us", image_base64=base64.b64encode(b"GIF89a....").decode())
+    assert out["success"] is False and "png, jpeg or webp" in out["message"] and calls == []
+
+
+class _Resp:
+    def __init__(self, status=200, headers=None, body=PNG):
+        self.status_code, self.headers, self._body = status, headers or {}, body
+        self.is_redirect = status in (301, 302, 303, 307, 308)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise whatsapp.requests.HTTPError(str(self.status_code))
+
+    def iter_content(self, n):
+        yield self._body
+
+
+def test_image_url_follows_redirects_and_rechecks_each_hop(monkeypatch):
+    monkeypatch.setattr(whatsapp, "_check_public_https", lambda url: None)
+    hops = iter([_Resp(302, {"Location": "/b.png"}), _Resp(200)])
+    monkeypatch.setattr(whatsapp.requests, "get", lambda *a, **k: next(hops))
+    assert whatsapp._fetch_image_url("https://example.com/a.png") == PNG
+
+
+def test_image_url_redirect_to_http_is_refused(monkeypatch):
+    monkeypatch.setattr(whatsapp, "_check_public_https", whatsapp._check_public_https)
+    monkeypatch.setattr(
+        whatsapp.socket if hasattr(whatsapp, "socket") else __import__("socket"),
+        "getaddrinfo",
+        lambda *a, **k: [(0, 0, 0, "", ("93.184.216.34", 443))],
+    )
+    monkeypatch.setattr(whatsapp.requests, "get", lambda *a, **k: _Resp(302, {"Location": "http://example.com/x.png"}))
+    with pytest.raises(ValueError, match="https"):
+        whatsapp._fetch_image_url("https://example.com/a.png")
+
+
+def test_image_url_too_many_redirects(monkeypatch):
+    monkeypatch.setattr(whatsapp, "_check_public_https", lambda url: None)
+    monkeypatch.setattr(whatsapp.requests, "get", lambda *a, **k: _Resp(302, {"Location": "https://example.com/x"}))
+    with pytest.raises(ValueError, match="redirects"):
+        whatsapp._fetch_image_url("https://example.com/a.png")
+
+
+def test_image_url_declared_size_too_big(monkeypatch):
+    monkeypatch.setattr(whatsapp, "_check_public_https", lambda url: None)
+    monkeypatch.setattr(whatsapp.requests, "get", lambda *a, **k: _Resp(200, {"Content-Length": str(6 * 1024 * 1024)}))
+    with pytest.raises(ValueError, match="5 MB"):
+        whatsapp._fetch_image_url("https://example.com/a.png")
+
+
+@pytest.mark.parametrize("path", ["C:\\Users\\Alma\\foto.jpg", "C:/Users/Alma/foto.jpg", "\\\\pc\\share\\f.jpg"])
+def test_save_to_windows_path_is_refused(monkeypatch, path):
+    calls = _fake_bridge(monkeypatch, lambda p: (200, {"success": True}))
+    out = whatsapp.get_profile_picture("5585@s.whatsapp.net", save_to=path)
+    assert out["success"] is False and "machine running this MCP server" in out["message"] and calls == []
+    out = whatsapp.get_group_profile_pictures("1@g.us", dest_dir=path)
+    assert out["success"] is False and calls == []

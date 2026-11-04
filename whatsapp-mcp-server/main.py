@@ -717,15 +717,16 @@ def set_group_photo(
 ) -> dict[str, Any]:
     """Set the photo of a group or community. Pass exactly one image source; none removes the photo.
 
-    This server runs on another machine than the caller, so a path on the caller's computer is
-    not readable here. From a remote client use image_base64 (file bytes, base64) or image_url
-    (public https link). image_path only works for files on the machine running this server.
+    This server runs on its own machine (not the caller's). Only that machine can read image_path;
+    a path from your own computer (e.g. C:\\Users\\...) fails with "File not found". From a remote
+    client send the image itself: image_base64 (png, jpeg or webp, up to 5 MB) or image_url (public
+    https link; the server downloads it, up to 3 redirects, every hop must stay https and public).
     The image is center-cropped to a square and resized to 640x640 JPEG.
 
     Args:
         group_jid: Group JID (id@g.us)
-        image_path: Path to an image on the machine running this server
-        image_base64: The image file's bytes, base64-encoded (png, jpg or webp, up to 10 MB)
+        image_path: Path on the machine running this server (not your own computer)
+        image_base64: The image file's bytes, base64-encoded (png, jpeg or webp, up to 5 MB)
         image_url: Public https URL of the image
     """
     sources = [x for x in (image_path, image_base64, image_url) if x]
@@ -866,7 +867,7 @@ def get_profile_picture(jid: str, preview: bool = False, save_to: str | None = N
     Args:
         jid: Contact JID (number@s.whatsapp.net or number@lid) or group JID (id@g.us)
         preview: Fetch the small thumbnail instead of the full-size image
-        save_to: Optional destination file path to copy the picture to (e.g. ~/deck/foto.jpg)
+        save_to: Optional destination path ON THE MACHINE RUNNING THIS SERVER (e.g. ~/deck/foto.jpg); a Windows path from the caller's computer is refused. Omit it to just get file_path in the bridge store
 
     Returns:
         success, status (ok, no_picture, private, rate_limited, not_connected, invalid_jid, error),
@@ -882,7 +883,7 @@ def get_group_profile_pictures(group_jid: str, dest_dir: str | None = None, prev
 
     Args:
         group_jid: Group JID (id@g.us)
-        dest_dir: Optional directory to copy the pictures to, named <name-slug>.jpg
+        dest_dir: Optional directory ON THE MACHINE RUNNING THIS SERVER to copy the pictures to, named <name-slug>.jpg (a Windows path from the caller's computer is refused)
         preview: Fetch small thumbnails instead of full-size images
 
     Returns:
