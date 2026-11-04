@@ -1622,3 +1622,45 @@ def group_manage(action: str, **fields: Any) -> dict[str, Any]:
     body.setdefault("success", False)
     body.setdefault("message", f"Bridge answered HTTP {http_status}")
     return body
+
+
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _fetch_image_url(url: str) -> bytes:
+    """Download an image from a public https URL (private and loopback hosts are refused)."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("image_url must be an https URL")
+    for info in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM):
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise ValueError("image_url must point to a public host")
+    with requests.get(url, timeout=30, stream=True, allow_redirects=False) as resp:
+        resp.raise_for_status()
+        data = b""
+        for chunk in resp.iter_content(65536):
+            data += chunk
+            if len(data) > _MAX_IMAGE_BYTES:
+                raise ValueError("image is larger than 10 MB")
+    return data
+
+
+def stage_image_bytes(data: bytes, name_hint: str = "group-photo") -> str:
+    """Write image bytes into the first media root and return the path."""
+    import uuid
+
+    if not data:
+        raise ValueError("image is empty")
+    if len(data) > _MAX_IMAGE_BYTES:
+        raise ValueError("image is larger than 10 MB")
+    root = _media_roots()[0]
+    os.makedirs(root, exist_ok=True)
+    dest = os.path.join(root, f"{name_hint}-{uuid.uuid4().hex[:8]}.img")
+    with open(dest, "wb") as fh:
+        fh.write(data)
+    return dest

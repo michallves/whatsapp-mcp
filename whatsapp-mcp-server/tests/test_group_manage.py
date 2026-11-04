@@ -92,3 +92,33 @@ def test_set_group_admins_actions(monkeypatch, admin, action):
     calls = _fake_bridge(monkeypatch, lambda p: (200, {"success": True}))
     main.set_group_admins("1@g.us", ["5585999990000"], admin=admin)
     assert calls[0][1]["action"] == action
+
+
+def test_set_group_photo_from_base64_is_staged_and_cleaned(tmp_path, monkeypatch):
+    import base64
+
+    monkeypatch.setenv("WHATSAPP_MEDIA_ROOTS", str(tmp_path / "outbox"))
+    seen = {}
+
+    def answer(p):
+        seen["path"] = p["media_path"]
+        seen["bytes"] = open(p["media_path"], "rb").read()
+        return (200, {"success": True})
+
+    _fake_bridge(monkeypatch, answer)
+    out = main.set_group_photo("1@g.us", image_base64=base64.b64encode(b"imgdata").decode())
+    assert out["success"] and seen["bytes"] == b"imgdata"
+    assert not (tmp_path / "outbox").joinpath(seen["path"]).exists()
+
+
+def test_set_group_photo_rejects_two_sources_and_bad_base64(monkeypatch):
+    calls = _fake_bridge(monkeypatch, lambda p: (200, {"success": True}))
+    assert main.set_group_photo("1@g.us", image_path="/a", image_url="https://x/y.png")["success"] is False
+    assert main.set_group_photo("1@g.us", image_base64="!!!")["success"] is False
+    assert calls == []
+
+
+@pytest.mark.parametrize("url", ["http://example.com/a.png", "https://127.0.0.1/a.png", "https://localhost/a.png"])
+def test_image_url_refuses_non_https_and_private_hosts(url):
+    with pytest.raises(ValueError):
+        whatsapp._fetch_image_url(url)

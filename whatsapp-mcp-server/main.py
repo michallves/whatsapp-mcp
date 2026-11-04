@@ -4,6 +4,7 @@ import sys
 import tempfile
 from typing import Annotated, Any
 
+import requests
 from mcp.server.fastmcp import FastMCP, Image
 from pydantic import Field
 
@@ -14,6 +15,9 @@ from parent_watchdog import install_stdio_parent_watchdog
 from whatsapp import (
     MESSAGES_DB_PATH,
     msg_to_dict,
+)
+from whatsapp import (
+    _fetch_image_url as whatsapp_fetch_image_url,
 )
 from whatsapp import (
     download_media as whatsapp_download_media,
@@ -77,6 +81,9 @@ from whatsapp import (
 )
 from whatsapp import (
     set_contact_alias as whatsapp_set_contact_alias,
+)
+from whatsapp import (
+    stage_image_bytes as whatsapp_stage_image_bytes,
 )
 
 # Initialize FastMCP server. Env-var handling is deferred to the __main__ block
@@ -702,17 +709,52 @@ def set_group_description(group_jid: str, description: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def set_group_photo(group_jid: str, image_path: str | None = None) -> dict[str, Any]:
-    """Set the photo of a group or community from a local image (png, jpg, webp...). Omit image_path to remove it.
+def set_group_photo(
+    group_jid: str,
+    image_path: str | None = None,
+    image_base64: str | None = None,
+    image_url: str | None = None,
+) -> dict[str, Any]:
+    """Set the photo of a group or community. Pass exactly one image source; none removes the photo.
 
-    The image is center-cropped to a square and resized to 640x640 JPEG. Files outside the media
-    folder are copied into it first.
+    This server runs on another machine than the caller, so a path on the caller's computer is
+    not readable here. From a remote client use image_base64 (file bytes, base64) or image_url
+    (public https link). image_path only works for files on the machine running this server.
+    The image is center-cropped to a square and resized to 640x640 JPEG.
 
     Args:
         group_jid: Group JID (id@g.us)
-        image_path: Path to the image on this machine; leave empty to remove the current photo
+        image_path: Path to an image on the machine running this server
+        image_base64: The image file's bytes, base64-encoded (png, jpg or webp, up to 10 MB)
+        image_url: Public https URL of the image
     """
-    return whatsapp_group_manage("set_photo", group_jid=group_jid, media_path=image_path or None)
+    sources = [x for x in (image_path, image_base64, image_url) if x]
+    if len(sources) > 1:
+        return {"success": False, "message": "Pass only one of image_path, image_base64, image_url"}
+    staged = image_path or None
+    try:
+        if image_base64:
+            import base64
+            import binascii
+
+            raw = image_base64.split(",", 1)[1] if image_base64.startswith("data:") else image_base64
+            try:
+                data = base64.b64decode(raw, validate=False)
+            except binascii.Error as e:
+                return {"success": False, "message": f"image_base64 is not valid base64: {e}"}
+            staged = whatsapp_stage_image_bytes(data)
+        elif image_url:
+            staged = whatsapp_stage_image_bytes(whatsapp_fetch_image_url(image_url))
+    except (ValueError, requests.RequestException, OSError) as e:
+        return {"success": False, "message": f"Could not get the image: {e}"}
+    try:
+        return whatsapp_group_manage("set_photo", group_jid=group_jid, media_path=staged)
+    finally:
+        if staged and staged != image_path:
+            try:
+                os.remove(staged)
+            except OSError:
+                pass
 
 
 @mcp.tool()
