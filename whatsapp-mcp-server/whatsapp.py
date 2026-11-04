@@ -1574,3 +1574,51 @@ def send_interactive_reply(
         return False, f"Error: HTTP {response.status_code} - {response.text}"
     except requests.RequestException as e:
         return False, f"Request error: {e}"
+
+
+def _media_roots() -> list[str]:
+    """Directories the bridge may read outbound files from (same rule as the bridge)."""
+    env = os.getenv("WHATSAPP_MEDIA_ROOTS", "").strip()
+    if env:
+        return [os.path.realpath(os.path.expanduser(p)) for p in env.split(os.pathsep) if p.strip()]
+    return [os.path.realpath(os.path.expanduser("~/.local/share/whatsapp-mcp/outbox"))]
+
+
+def _stage_for_bridge(path: str) -> str:
+    """Return a path the bridge accepts, copying the file into the first media root if needed."""
+    import shutil
+
+    real = os.path.realpath(os.path.expanduser(path))
+    if not os.path.isfile(real):
+        raise FileNotFoundError(f"File not found: {path}")
+    roots = _media_roots()
+    for root in roots:
+        if real == root or real.startswith(root + os.sep):
+            return real
+    os.makedirs(roots[0], exist_ok=True)
+    dest = os.path.join(roots[0], f"group-photo-{os.path.basename(real)}")
+    shutil.copyfile(real, dest)
+    return dest
+
+
+def group_manage(action: str, **fields: Any) -> dict[str, Any]:
+    """Call POST /api/group-manage on the bridge. None-valued fields are dropped.
+
+    Returns the bridge's JSON ({success, message, group, groups, ...}); transport and HTTP
+    errors come back as {"success": False, "message": ...} instead of raising.
+    """
+    payload = {"action": action, **{k: v for k, v in fields.items() if v is not None}}
+    try:
+        media_path = payload.get("media_path")
+        if media_path:
+            payload["media_path"] = _stage_for_bridge(str(media_path))
+        http_status, body = _bridge_post_json("group-manage", payload, timeout=120)
+    except FileNotFoundError as e:
+        return {"success": False, "message": str(e)}
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Request error: {e}"}
+    if not body:
+        return {"success": False, "message": f"Bridge answered HTTP {http_status} with no usable body"}
+    body.setdefault("success", False)
+    body.setdefault("message", f"Bridge answered HTTP {http_status}")
+    return body

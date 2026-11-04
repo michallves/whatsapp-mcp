@@ -43,6 +43,9 @@ from whatsapp import (
     get_sender_name as whatsapp_get_sender_name,
 )
 from whatsapp import (
+    group_manage as whatsapp_group_manage,
+)
+from whatsapp import (
     list_chats as whatsapp_list_chats,
 )
 from whatsapp import (
@@ -533,6 +536,285 @@ def set_contact_alias(jid: str, alias: str) -> dict[str, Any]:
 def list_contact_aliases() -> dict[str, str]:
     """List every contact alias as {phone number: display name}."""
     return whatsapp_list_contact_aliases()
+
+
+# --- Groups and communities -------------------------------------------------
+# Every tool below goes through POST /api/group-manage on the bridge. Creating
+# groups, adding people and changing settings notifies the members: only do it
+# when the user asked for that exact change.
+
+
+@mcp.tool()
+def list_groups() -> dict[str, Any]:
+    """List every group and community this account is in (name, JID, is_community, parent)."""
+    return whatsapp_group_manage("list_groups")
+
+
+@mcp.tool()
+def get_group_info(group_jid: str) -> dict[str, Any]:
+    """Get a group or community: name, description, settings, owner, parent community and members (with admin flag).
+
+    Args:
+        group_jid: Group JID (id@g.us)
+    """
+    return whatsapp_group_manage("info", group_jid=group_jid)
+
+
+@mcp.tool()
+def create_group(
+    name: str,
+    participants: list[str],
+    description: str | None = None,
+    community_jid: str | None = None,
+    announce_only: bool | None = None,
+    admins_edit_info_only: bool | None = None,
+    require_join_approval: bool | None = None,
+) -> dict[str, Any]:
+    """Create a WhatsApp group. Members are notified, so only do it when the user asked.
+
+    Args:
+        name: Group name, at most 25 characters
+        participants: Phone numbers (5585999990000) or JIDs to add; you are added automatically.
+            WhatsApp refuses some (privacy settings, not a contact): those come back in "results"
+            or "group.participant_errors" with the error code
+        description: Optional group description
+        community_jid: Optional community JID (id@g.us); creates the group inside that community
+        announce_only: Only admins can send messages
+        admins_edit_info_only: Only admins can edit the group info
+        require_join_approval: New members need admin approval
+    """
+    return whatsapp_group_manage(
+        "create_group",
+        name=name,
+        participants=participants,
+        description=description,
+        parent_jid=community_jid,
+        announce=announce_only,
+        locked=admins_edit_info_only,
+        join_approval=require_join_approval,
+    )
+
+
+@mcp.tool()
+def create_community(
+    name: str, description: str | None = None, participants: list[str] | None = None
+) -> dict[str, Any]:
+    """Create a WhatsApp community. WhatsApp also creates its announcement group automatically.
+
+    Add existing groups with community_link_group, or new ones with create_group(community_jid=...).
+
+    Args:
+        name: Community name, at most 25 characters
+        description: Optional description
+        participants: Optional phone numbers or JIDs to add as members
+    """
+    return whatsapp_group_manage(
+        "create_community", name=name, description=description, participants=participants or []
+    )
+
+
+@mcp.tool()
+def community_link_group(community_jid: str, group_jid: str) -> dict[str, Any]:
+    """Add an existing group to a community (you must be admin of both).
+
+    Args:
+        community_jid: Community JID (id@g.us)
+        group_jid: Group to add (id@g.us)
+    """
+    return whatsapp_group_manage("link_group", parent_jid=community_jid, child_jid=group_jid)
+
+
+@mcp.tool()
+def community_unlink_group(community_jid: str, group_jid: str) -> dict[str, Any]:
+    """Remove a group from a community. The group itself stays; it just stops being part of it.
+
+    Args:
+        community_jid: Community JID (id@g.us)
+        group_jid: Group to remove (id@g.us)
+    """
+    return whatsapp_group_manage("unlink_group", parent_jid=community_jid, child_jid=group_jid)
+
+
+@mcp.tool()
+def list_community_groups(community_jid: str) -> dict[str, Any]:
+    """List the groups that belong to a community (the announcement group is flagged).
+
+    Args:
+        community_jid: Community JID (id@g.us)
+    """
+    return whatsapp_group_manage("subgroups", group_jid=community_jid)
+
+
+@mcp.tool()
+def add_group_participants(group_jid: str, participants: list[str]) -> dict[str, Any]:
+    """Add people to a group or community. Needs admin, and notifies them.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        participants: Phone numbers or JIDs. Refusals are listed in "results" with WhatsApp's error code
+    """
+    return whatsapp_group_manage("add_participants", group_jid=group_jid, participants=participants)
+
+
+@mcp.tool()
+def remove_group_participants(group_jid: str, participants: list[str]) -> dict[str, Any]:
+    """Remove people from a group or community. Needs admin.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        participants: Phone numbers or JIDs to remove
+    """
+    return whatsapp_group_manage("remove_participants", group_jid=group_jid, participants=participants)
+
+
+@mcp.tool()
+def set_group_admins(group_jid: str, participants: list[str], admin: bool = True) -> dict[str, Any]:
+    """Promote members to admin, or demote them back to regular members.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        participants: Phone numbers or JIDs
+        admin: True promotes to admin, False demotes
+    """
+    return whatsapp_group_manage("promote" if admin else "demote", group_jid=group_jid, participants=participants)
+
+
+@mcp.tool()
+def rename_group(group_jid: str, name: str) -> dict[str, Any]:
+    """Rename a group or community (at most 25 characters).
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        name: New name
+    """
+    return whatsapp_group_manage("rename", group_jid=group_jid, name=name)
+
+
+@mcp.tool()
+def set_group_description(group_jid: str, description: str) -> dict[str, Any]:
+    """Set the description of a group or community. An empty string removes it.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        description: New description, at most 2048 characters
+    """
+    return whatsapp_group_manage("set_description", group_jid=group_jid, description=description)
+
+
+@mcp.tool()
+def set_group_photo(group_jid: str, image_path: str | None = None) -> dict[str, Any]:
+    """Set the photo of a group or community from a local image (png, jpg, webp...). Omit image_path to remove it.
+
+    The image is center-cropped to a square and resized to 640x640 JPEG. Files outside the media
+    folder are copied into it first.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        image_path: Path to the image on this machine; leave empty to remove the current photo
+    """
+    return whatsapp_group_manage("set_photo", group_jid=group_jid, media_path=image_path or None)
+
+
+@mcp.tool()
+def set_group_settings(
+    group_jid: str,
+    announce_only: bool | None = None,
+    admins_edit_info_only: bool | None = None,
+    require_join_approval: bool | None = None,
+    who_can_add_members: str | None = None,
+) -> dict[str, Any]:
+    """Change group settings; only the ones you pass are changed.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        announce_only: True = only admins can send messages
+        admins_edit_info_only: True = only admins can edit name, photo and description
+        require_join_approval: True = new members need admin approval
+        who_can_add_members: "admin" or "all"
+    """
+    done: list[dict[str, Any]] = []
+    steps: list[tuple[str, dict[str, Any]]] = []
+    if announce_only is not None:
+        steps.append(("set_announce", {"value": announce_only}))
+    if admins_edit_info_only is not None:
+        steps.append(("set_locked", {"value": admins_edit_info_only}))
+    if require_join_approval is not None:
+        steps.append(("set_join_approval", {"value": require_join_approval}))
+    if who_can_add_members is not None:
+        steps.append(("set_member_add_mode", {"mode": who_can_add_members}))
+    if not steps:
+        return {"success": False, "message": "No setting was given"}
+    for action, extra in steps:
+        result = whatsapp_group_manage(action, group_jid=group_jid, **extra)
+        done.append({"action": action, "success": result.get("success", False), "message": result.get("message")})
+        if not result.get("success"):
+            break
+    return {"success": all(d["success"] for d in done) and len(done) == len(steps), "steps": done}
+
+
+@mcp.tool()
+def get_group_invite_link(group_jid: str, reset: bool = False) -> dict[str, Any]:
+    """Get the invite link of a group. reset=True revokes the old link and creates a new one.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        reset: Revoke the current link first (anyone holding the old one loses access)
+    """
+    return whatsapp_group_manage("invite_link", group_jid=group_jid, reset=reset)
+
+
+@mcp.tool()
+def list_group_join_requests(group_jid: str) -> dict[str, Any]:
+    """List people waiting for approval to join a group (groups with join approval on).
+
+    Args:
+        group_jid: Group JID (id@g.us)
+    """
+    return whatsapp_group_manage("list_requests", group_jid=group_jid)
+
+
+@mcp.tool()
+def answer_group_join_requests(group_jid: str, participants: list[str], approve: bool = True) -> dict[str, Any]:
+    """Approve or reject pending join requests.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+        participants: JIDs from list_group_join_requests
+        approve: True approves, False rejects
+    """
+    return whatsapp_group_manage(
+        "approve_requests" if approve else "reject_requests", group_jid=group_jid, participants=participants
+    )
+
+
+@mcp.tool()
+def preview_group_invite(invite_link: str) -> dict[str, Any]:
+    """Read a group's name and size from an invite link without joining.
+
+    Args:
+        invite_link: https://chat.whatsapp.com/CODE or just the code
+    """
+    return whatsapp_group_manage("preview_link", code=invite_link)
+
+
+@mcp.tool()
+def join_group(invite_link: str) -> dict[str, Any]:
+    """Join a group through an invite link. Only when the user asked to join that group.
+
+    Args:
+        invite_link: https://chat.whatsapp.com/CODE or just the code
+    """
+    return whatsapp_group_manage("join_link", code=invite_link)
+
+
+@mcp.tool()
+def leave_group(group_jid: str) -> dict[str, Any]:
+    """Leave a group or community. Hard to undo (needs a new invite), so only on explicit request.
+
+    Args:
+        group_jid: Group JID (id@g.us)
+    """
+    return whatsapp_group_manage("leave", group_jid=group_jid)
 
 
 @mcp.tool()

@@ -2393,6 +2393,12 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 	// Profile pictures and group participants (see profile_picture.go)
 	registerProfilePictureEndpoints(mux, auth, client)
 
+	// Contact names written to the phone address book (see contact_edit.go)
+	registerContactEditEndpoint(mux, auth, client)
+
+	// Groups and communities: create, members, settings, photo (see group_manage.go)
+	registerGroupManageEndpoint(mux, auth, client, allowedMediaRoots)
+
 	// Health check endpoint
 	mux.HandleFunc("/api/health", auth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
