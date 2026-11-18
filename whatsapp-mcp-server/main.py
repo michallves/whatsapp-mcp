@@ -80,6 +80,10 @@ from whatsapp import (
     send_reaction as whatsapp_send_reaction,
 )
 from whatsapp import (
+    delete_message as whatsapp_delete_message,
+    edit_message as whatsapp_edit_message,
+)
+from whatsapp import (
     set_contact_alias as whatsapp_set_contact_alias,
 )
 from whatsapp import (
@@ -417,6 +421,33 @@ def send_reaction(
         A dictionary containing success status and a status message
     """
     success, status_message = whatsapp_send_reaction(recipient, message_id, emoji, from_me, sender_jid)
+    return {"success": success, "message": status_message}
+
+
+@mcp.tool()
+def delete_message(recipient: str, message_id: str, sender_jid: str = "") -> dict[str, Any]:
+    """Delete a WhatsApp message for everyone (revoke). Irreversible.
+
+    Args:
+        recipient: Chat JID the message belongs to
+        message_id: ID of the message to delete
+        sender_jid: Leave empty for messages sent by the current user. Only set it to revoke
+                    someone else's message in a group where the current user is admin.
+    """
+    success, status_message = whatsapp_delete_message(recipient, message_id, sender_jid)
+    return {"success": success, "message": status_message}
+
+
+@mcp.tool()
+def edit_message(recipient: str, message_id: str, text: str) -> dict[str, Any]:
+    """Edit the text of a message sent by the current user (WhatsApp allows it for about 15 minutes after sending; text messages only).
+
+    Args:
+        recipient: Chat JID the message belongs to
+        message_id: ID of the message to edit
+        text: The new full text of the message
+    """
+    success, status_message = whatsapp_edit_message(recipient, message_id, text)
     return {"success": success, "message": status_message}
 
 

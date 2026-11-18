@@ -1324,6 +1324,38 @@ def send_reaction(
         return False, f"Unexpected error: {str(e)}"
 
 
+def delete_message(recipient: str, message_id: str, sender_jid: str = "") -> tuple[bool, str]:
+    """Delete a message for everyone (revoke). Leave sender_jid empty for our own messages."""
+    try:
+        if not recipient or not message_id:
+            return False, "Recipient and message ID must be provided"
+        payload = {"recipient": recipient, "message_id": message_id, "sender_jid": sender_jid}
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/delete-message", json=payload, headers=_bridge_headers())
+        if response.status_code == 200 and response.json().get("ok"):
+            return True, "Message deleted for everyone"
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+    except requests.RequestException as e:
+        return False, f"Request error: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+
+def edit_message(recipient: str, message_id: str, text: str) -> tuple[bool, str]:
+    """Edit the text of a message we sent."""
+    try:
+        if not recipient or not message_id or not text.strip():
+            return False, "Recipient, message ID and text must be provided"
+        payload = {"recipient": recipient, "message_id": message_id, "text": text}
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/edit-message", json=payload, headers=_bridge_headers())
+        if response.status_code == 200 and response.json().get("ok"):
+            return True, "Message edited"
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+    except requests.RequestException as e:
+        return False, f"Request error: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+
 def mark_messages_read(
     message_ids: list[str],
     chat_jid: str,

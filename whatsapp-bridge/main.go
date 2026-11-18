@@ -2396,6 +2396,9 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 	// Contact names written to the phone address book (see contact_edit.go)
 	registerContactEditEndpoint(mux, auth, client)
 
+	// Delete (revoke) and edit own messages (see message_manage.go)
+	registerMessageManageEndpoints(mux, auth, client, messageStore)
+
 	// Groups and communities: create, members, settings, photo (see group_manage.go)
 	registerGroupManageEndpoint(mux, auth, client, allowedMediaRoots)
 
