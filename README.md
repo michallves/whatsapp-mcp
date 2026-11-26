@@ -23,6 +23,7 @@ was added on top.
 | Show message times in your timezone | `WHATSAPP_TIMEZONE` |
 | Download profile pictures of contacts and groups | `get_profile_picture`, `get_group_profile_pictures` |
 | Create and manage groups and communities: members, admins, settings, photo, invite links, join requests | `create_group`, `create_community`, `community_link_group`, `add_group_participants`, `set_group_photo`, `set_group_settings`, ... (`POST /api/group-manage`, see `group_manage.go`) |
+| Save a contact in the phone's address book from a number or a received contact card (vCard) | `add_contact` (`POST /api/check-numbers`, `POST /api/contact-edit`) |
 | Show your own names for contacts (project, role) without touching the phone's address book | `set_contact_alias`, `list_contact_aliases` |
 | Answer buttons, lists and templates | `reply_to_interactive`, `POST /api/interactive-reply` |
 | Optional webhook heads-up for audio, video and documents (`WEBHOOK_NOTIFY_MEDIA=true`): message ID and type only, no file contents | `whatsapp-bridge/webhook.go` |
@@ -77,6 +78,15 @@ unit after updating the code so new tools appear).
 
 The database stores UTC. Set `WHATSAPP_TIMEZONE` to an IANA name (for example `America/Fortaleza`) so the
 times returned by the tools are local; empty means the system timezone.
+
+### Add contact
+
+`add_contact(name, phone)` saves a contact in the phone's address book, and
+`add_contact(message_id, chat_jid)` does the same from a received contact card (`name` is optional there and only
+allowed when the card holds one number). Numbers without a country code get `WHATSAPP_DEFAULT_COUNTRY_CODE`
+(default `55`). Each number is checked on WhatsApp first, and numbers that are not on it come back in `failed`.
+The contact then follows the phone's default contacts account (iCloud or Google on iPhone, Google on Android).
+Contact cards are stored from this version on; cards received earlier are not in `messages.db`.
 
 ### Contact aliases
 

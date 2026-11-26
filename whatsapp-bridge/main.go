@@ -1115,6 +1115,9 @@ func extractTextContent(msg *waProto.Message) string {
 	if t := describeInteractive(msg); t != "" {
 		return t
 	}
+	if t := extractContactCardText(msg); t != "" {
+		return t
+	}
 	// WhatsApp Business templates arrive hydrated — body lives in
 	// HydratedTemplate.HydratedContentText. Without this branch every
 	// template-sent message (e.g. WABA Connect Hrms_* notifications)
@@ -2395,6 +2398,10 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 
 	// Contact names written to the phone address book (see contact_edit.go)
 	registerContactEditEndpoint(mux, auth, client)
+	registerCheckNumbersEndpoint(mux, auth, client)
+
+	// Delete (revoke) and edit own messages (see message_manage.go)
+	registerMessageManageEndpoints(mux, auth, client, messageStore)
 
 	// Groups and communities: create, members, settings, photo (see group_manage.go)
 	registerGroupManageEndpoint(mux, auth, client, allowedMediaRoots)
