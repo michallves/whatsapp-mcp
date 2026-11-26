@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import audio
+from contact_cards import parse_vcards
 
 # Configuration via environment variables with sensible defaults
 _DEFAULT_BRIDGE_STORE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whatsapp-bridge", "store")
@@ -402,6 +403,128 @@ def set_contact_alias(jid: str, alias: str) -> dict[str, Any]:
 
 def list_contact_aliases() -> dict[str, str]:
     return load_aliases()
+
+
+DEFAULT_COUNTRY_CODE = os.getenv("WHATSAPP_DEFAULT_COUNTRY_CODE", "55")
+_MIN_PHONE_DIGITS = 8
+_MAX_PHONE_DIGITS = 15
+_NATIONAL_NUMBER_LENGTHS = (10, 11)
+
+
+def normalize_phone_number(raw: str) -> str | None:
+    """Digits with country code for a typed or vCard number; None when it cannot be a phone number."""
+    text = (raw or "").strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    has_country_code = text.startswith("+") or digits.startswith("00")
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if not has_country_code and len(digits) in _NATIONAL_NUMBER_LENGTHS:
+        digits = DEFAULT_COUNTRY_CODE + digits
+    if not _MIN_PHONE_DIGITS <= len(digits) <= _MAX_PHONE_DIGITS:
+        return None
+    return digits
+
+
+def _post_bridge(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        http_status, body = _bridge_post_json(endpoint, payload)
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Request error: {e}"}
+    if not body:
+        return {"success": False, "message": f"Bridge answered HTTP {http_status} with no usable body"}
+    body.setdefault("success", False)
+    body.setdefault("message", f"Bridge answered HTTP {http_status}")
+    return body
+
+
+def _read_message_content(message_id: str, chat_jid: str) -> str | None:
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT content FROM messages WHERE id = ? AND chat_jid = ? AND deleted_at IS NULL",
+                (message_id, chat_jid),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        print(f"Database error (messages.db): {e}")
+        return None
+    return row[0] if row else None
+
+
+def _contacts_from_card_message(
+    message_id: str, chat_jid: str, name_override: str | None
+) -> tuple[list[tuple[str, str]], str | None]:
+    content = _read_message_content(message_id, chat_jid)
+    if content is None:
+        return [], "Message not found in this chat"
+    cards = parse_vcards(content)
+    if not cards:
+        return [], "Message has no contact card (cards received before this feature was added were not stored)"
+    entries = [(card.name, phone) for card in cards for phone in card.phones]
+    if not entries:
+        return [], "Contact card has no phone number"
+    if name_override:
+        if len(entries) > 1:
+            return [], "name can only be set when the card holds a single number"
+        entries = [(name_override, entries[0][1])]
+    return entries, None
+
+
+def _save_contact_in_address_book(name: str, jid: str) -> str | None:
+    result = _post_bridge("contact-edit", {"jid": jid, "full_name": name})
+    if not result["success"]:
+        return str(result["message"])
+    set_contact_alias(jid, name)
+    return None
+
+
+def add_contact(
+    name: str | None = None,
+    phone: str | None = None,
+    message_id: str | None = None,
+    chat_jid: str | None = None,
+) -> dict[str, Any]:
+    """Save contacts in the phone's address book from a typed number or from a received contact card."""
+    if phone:
+        normalized = normalize_phone_number(phone)
+        if not name or not name.strip():
+            return {"success": False, "message": "name is required when saving a number"}
+        if not normalized:
+            return {"success": False, "message": f"Invalid phone number: {phone}"}
+        entries, error = [(name.strip(), normalized)], None
+    elif message_id and chat_jid:
+        entries, error = _contacts_from_card_message(message_id, chat_jid, (name or "").strip() or None)
+    else:
+        return {"success": False, "message": "Provide phone and name, or message_id and chat_jid of a contact card"}
+    if error:
+        return {"success": False, "message": error}
+
+    phones = [number for _, number in entries]
+    lookup = _post_bridge("check-numbers", {"phones": phones})
+    if not lookup["success"]:
+        return {"success": False, "message": lookup["message"]}
+    jid_by_phone = {check["phone"]: check["jid"] for check in lookup.get("results", []) if check.get("is_registered")}
+
+    saved: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = []
+    for entry_name, number in entries:
+        jid = jid_by_phone.get(number)
+        if not entry_name:
+            failed.append({"phone": number, "reason": "contact card has no name; pass name"})
+        elif not jid:
+            failed.append({"name": entry_name, "phone": number, "reason": "number is not on WhatsApp"})
+        elif (reason := _save_contact_in_address_book(entry_name, jid)) is not None:
+            failed.append({"name": entry_name, "phone": number, "reason": reason})
+        else:
+            saved.append({"name": entry_name, "phone": number, "jid": jid})
+    return {
+        "success": bool(saved) and not failed,
+        "message": f"Saved {len(saved)} of {len(entries)} contact(s)",
+        "saved": saved,
+        "failed": failed,
+    }
 
 
 def get_sender_name(sender_jid: str) -> str:

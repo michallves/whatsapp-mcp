@@ -20,7 +20,16 @@ from whatsapp import (
     _fetch_image_url as whatsapp_fetch_image_url,
 )
 from whatsapp import (
+    add_contact as whatsapp_add_contact,
+)
+from whatsapp import (
+    delete_message as whatsapp_delete_message,
+)
+from whatsapp import (
     download_media as whatsapp_download_media,
+)
+from whatsapp import (
+    edit_message as whatsapp_edit_message,
 )
 from whatsapp import (
     get_chat as whatsapp_get_chat,
@@ -78,10 +87,6 @@ from whatsapp import (
 )
 from whatsapp import (
     send_reaction as whatsapp_send_reaction,
-)
-from whatsapp import (
-    delete_message as whatsapp_delete_message,
-    edit_message as whatsapp_edit_message,
 )
 from whatsapp import (
     set_contact_alias as whatsapp_set_contact_alias,
@@ -568,6 +573,32 @@ def set_contact_alias(jid: str, alias: str) -> dict[str, Any]:
         alias: Name to show; empty to remove the alias
     """
     return whatsapp_set_contact_alias(jid, alias)
+
+
+@mcp.tool()
+def add_contact(
+    name: str | None = None,
+    phone: str | None = None,
+    message_id: str | None = None,
+    chat_jid: str | None = None,
+) -> dict[str, Any]:
+    """Save a contact in the phone's address book (it syncs to the phone's default contacts account).
+
+    Two ways to call it:
+    - By number: pass phone and name. Numbers without a country code get the default one (55).
+    - By contact card: pass message_id and chat_jid of a received contact card (vCard). name is
+      optional and only allowed when the card holds a single number.
+
+    Every number is checked on WhatsApp first; numbers that are not on WhatsApp are reported in
+    "failed". Saved contacts also get a local alias so search_contacts finds them right away.
+
+    Args:
+        name: Full name to save (required with phone)
+        phone: Phone number, e.g. "+55 85 99999-0000" or "85999990000"
+        message_id: ID of the message that holds the contact card
+        chat_jid: JID of the chat that holds that message
+    """
+    return whatsapp_add_contact(name=name, phone=phone, message_id=message_id, chat_jid=chat_jid)
 
 
 @mcp.tool()
