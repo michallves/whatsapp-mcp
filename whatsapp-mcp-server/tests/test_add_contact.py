@@ -11,7 +11,12 @@ VCARD = "BEGIN:VCARD\nFN:Romario\nTEL;waid=5585999990000:+55 85 99999-0000\nEND:
 def bridge(monkeypatch, tmp_path):
     monkeypatch.setattr(whatsapp, "ALIASES_PATH", str(tmp_path / "contact_aliases.json"))
     monkeypatch.setattr(whatsapp, "_resolve_lid_to_phone", lambda _lid: None)
-    state = {"registered": {"5585999990000"}, "edit_error": None, "calls": []}
+    state = {
+        "registered": {"5585999990000"},
+        "edit_error": None,
+        "calls": [],
+        "lookup_jid": lambda p: f"{p}@s.whatsapp.net",
+    }
 
     def fake(endpoint, payload, timeout=60):
         state["calls"].append((endpoint, payload))
@@ -20,7 +25,7 @@ def bridge(monkeypatch, tmp_path):
                 {
                     "phone": p,
                     "is_registered": p in state["registered"],
-                    **({"jid": f"{p}@s.whatsapp.net"} if p in state["registered"] else {}),
+                    **({"jid": state["lookup_jid"](p)} if p in state["registered"] else {}),
                 }
                 for p in payload["phones"]
             ]
@@ -75,6 +80,14 @@ def test_add_by_number_saves_contact_and_alias(bridge):
         {"jid": "5585999990000@s.whatsapp.net", "full_name": "Romario - Fortes - PO"},
     )
     assert whatsapp.get_alias("5585999990000@s.whatsapp.net") == "Romario - Fortes - PO"
+
+
+def test_lid_lookup_still_saves_with_phone_jid(bridge):
+    bridge["lookup_jid"] = lambda _phone: "1234567890@lid"
+    result = whatsapp.add_contact(name="Maria", phone="85999990000")
+    assert result["saved"][0]["jid"] == "5585999990000@s.whatsapp.net"
+    assert bridge["calls"][-1][1]["jid"] == "5585999990000@s.whatsapp.net"
+    assert whatsapp.get_alias("5585999990000@s.whatsapp.net") == "Maria"
 
 
 def test_add_by_number_requires_name_and_valid_phone(bridge):

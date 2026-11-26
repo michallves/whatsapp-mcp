@@ -472,6 +472,12 @@ def _contacts_from_card_message(
     return entries, None
 
 
+def _phone_jid(phone: str, looked_up_jid: str) -> str:
+    if looked_up_jid.endswith("@s.whatsapp.net"):
+        return looked_up_jid
+    return f"{phone}@s.whatsapp.net"
+
+
 def _save_contact_in_address_book(name: str, jid: str) -> str | None:
     result = _post_bridge("contact-edit", {"jid": jid, "full_name": name})
     if not result["success"]:
@@ -505,7 +511,11 @@ def add_contact(
     lookup = _post_bridge("check-numbers", {"phones": phones})
     if not lookup["success"]:
         return {"success": False, "message": lookup["message"]}
-    jid_by_phone = {check["phone"]: check["jid"] for check in lookup.get("results", []) if check.get("is_registered")}
+    jid_by_phone = {
+        check["phone"]: _phone_jid(check["phone"], check["jid"])
+        for check in lookup.get("results", [])
+        if check.get("is_registered")
+    }
 
     saved: list[dict[str, str]] = []
     failed: list[dict[str, str]] = []
